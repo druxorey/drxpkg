@@ -44,7 +44,7 @@ func SearchAur(aurUrl, term string, timeoutMs int, maxResults int) ([]Package, e
 	}
 
 	sort.Slice(s.Results, func(i, j int) bool {
-		return s.Results[i].Name < s.Results[j].Name
+		return s.Results[i].NumVotes > s.Results[j].NumVotes
 	})
 
 	for _, pkg := range s.Results {

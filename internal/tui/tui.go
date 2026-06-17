@@ -353,7 +353,7 @@ func (ui *UI) performSearch(term string) {
 	go func() {
 		// ALPM repository search
 		ui.alpmMutex.Lock()
-		reposPkgs, localPkgs, err := SearchRepos(ui.alpmHandle, term, ui.conf.MaxResults)
+		reposPkgs, localPkgs, err := SearchRepos(ui.alpmHandle, term, 2000)
 		ui.alpmMutex.Unlock()
 
 		if err != nil {
@@ -367,7 +367,7 @@ func (ui *UI) performSearch(term string) {
 		// AUR search
 		var aurPkgs []Package
 		if !ui.conf.DisableAur {
-			aurPkgs, _ = SearchAur("", term, 5000, ui.conf.MaxResults)
+			aurPkgs, _ = SearchAur("", term, 5000, 2000)
 			// Deduplicate AUR search list with local DB
 			for idx := range aurPkgs {
 				ui.alpmMutex.Lock()
@@ -394,51 +394,24 @@ func (ui *UI) performSearch(term string) {
 			resultList = append(resultList, p)
 		}
 
-		// Sort packages by search term relevance
+		// Sort packages by search term relevance using the unified scoring function
 		sort.Slice(resultList, func(i, j int) bool {
 			a, b := resultList[i], resultList[j]
-			termLower := strings.ToLower(term)
-			aNameLower := strings.ToLower(a.Name)
-			bNameLower := strings.ToLower(b.Name)
-
-			// 1. AUR-specific blended reputation sorting
-			if a.Source == "AUR" && b.Source == "AUR" {
-				aScore := getAurScore(a, term)
-				bScore := getAurScore(b, term)
-				if aScore != bScore {
-					return aScore > bScore
-				}
+			if a.IsInstalled != b.IsInstalled {
+				return a.IsInstalled
 			}
-
-			// 2. Exact match
-			aExact := aNameLower == termLower
-			bExact := bNameLower == termLower
-			if aExact != bExact {
-				return aExact
+			aScore := getUnifiedScore(a, term)
+			bScore := getUnifiedScore(b, term)
+			if aScore != bScore {
+				return aScore > bScore
 			}
-
-			// 3. Starts with search term
-			aStarts := strings.HasPrefix(aNameLower, termLower)
-			bStarts := strings.HasPrefix(bNameLower, termLower)
-			if aStarts != bStarts {
-				return aStarts
-			}
-
-			// 4. Official repository priority (anything not AUR/local is official)
-			aOfficial := a.Source != "AUR" && a.Source != "local"
-			bOfficial := b.Source != "AUR" && b.Source != "local"
-			if aOfficial != bOfficial {
-				return aOfficial
-			}
-
-			// 5. Shorter name length first (relevance)
-			if len(a.Name) != len(b.Name) {
-				return len(a.Name) < len(b.Name)
-			}
-
-			// 6. Alphabetical fallback
 			return a.Name < b.Name
 		})
+
+		// Slice to MaxResults to respect configured visual limits
+		if len(resultList) > ui.conf.MaxResults {
+			resultList = resultList[:ui.conf.MaxResults]
+		}
 
 		ui.app.QueueUpdateDraw(func() {
 			ui.shownPackages = resultList
@@ -566,26 +539,38 @@ func (ui *UI) loadPackageDetails(pkg Package) {
 	}()
 }
 
-func getAurScore(p Package, term string) float64 {
+func getUnifiedScore(p Package, term string) float64 {
 	nameLower := strings.ToLower(p.Name)
 	termLower := strings.ToLower(term)
 
 	var matchScore float64
 	if nameLower == termLower {
-		matchScore = 5000.0
+		matchScore = 100000.0
 	} else if strings.HasPrefix(nameLower, termLower) {
-		matchScore = 2000.0
+		matchScore = 30000.0
 	} else if strings.Contains(nameLower, termLower) {
-		matchScore = 500.0
+		matchScore = 10000.0
 	} else {
-		matchScore = 0.0
+		matchScore = 1000.0 // Description match
 	}
 
+	// Source trust bonus (+5,000 for official repositories)
+	var sourceBonus float64
+	if p.Source != "AUR" && p.Source != "local" {
+		sourceBonus = 5000.0
+	}
+
+	// Reputation (AUR votes)
+	reputation := float64(p.Votes)
+
+	// Name length tie-breaker (shorter names get a small bonus)
 	nameLen := len(p.Name)
 	if nameLen == 0 {
 		nameLen = 1
 	}
-	return matchScore + float64(p.Votes) + (10.0 / float64(nameLen))
+	lengthBonus := 100.0 / float64(nameLen)
+
+	return matchScore + sourceBonus + reputation + lengthBonus
 }
 
 func (ui *UI) installOrUninstallPackage(pkg Package) {
