@@ -1,6 +1,5 @@
-package pacseek
+package tui
 
-// SearchResults is a data structure that is being sent back from the RPC service
 type SearchResults struct {
 	Error       string       `json:"error,omitempty"`
 	Resultcount int          `json:"resultcount"`
@@ -9,7 +8,6 @@ type SearchResults struct {
 	Version     int          `json:"version"`
 }
 
-// InfoRecord is a data structure for "search" API calls (results)
 type InfoRecord struct {
 	CheckDepends      []string `json:"CheckDepends,omitempty"`
 	Conflicts         []string `json:"Conflicts,omitempty"`
@@ -50,27 +48,10 @@ type DependencySatisfier struct {
 	Installed bool
 }
 
-// Package is a data structure for the package tview table
 type Package struct {
 	Name         string
 	Source       string
 	IsInstalled  bool
 	LastModified int
 	Popularity   float64
-}
-
-// get package information
-func (ps *UI) getInfo(source string, pkgs ...string) SearchResults {
-	sr := SearchResults{}
-	if source == "AUR" || source == "all" {
-		sr = infoAur(ps.conf.AurRpcUrl, ps.conf.AurTimeout, pkgs...)
-		if source == "all" {
-			sr.Results = append(sr.Results, infoPacman(ps.alpmHandle, ps.conf.ComputeRequiredBy, pkgs...).Results...)
-		}
-	} else {
-		sr = infoPacman(ps.alpmHandle, ps.conf.ComputeRequiredBy, pkgs...)
-	}
-
-	addLocalSatisfiers(ps.alpmHandle, sr.Results...)
-	return sr
 }

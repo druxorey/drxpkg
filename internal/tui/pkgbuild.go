@@ -1,0 +1,55 @@
+package tui
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"regexp"
+)
+
+const (
+	UrlAurPkgbuild  = "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=%s"
+	UrlRepoPkgbuild = "https://gitlab.archlinux.org/archlinux/packaging/packages/%s/-/raw/main/PKGBUILD"
+)
+
+type RegexReplace struct {
+	repl  string
+	match *regexp.Regexp
+}
+
+var gitlabRepl = []RegexReplace{
+	{repl: `$1-$2`, match: regexp.MustCompile(`([a-zA-Z0-9]+)\+([a-zA-Z]+)`)},
+	{repl: `plus`, match: regexp.MustCompile(`\+`)},
+	{repl: `-`, match: regexp.MustCompile(`[^a-zA-Z0-9_\-\.]`)},
+	{repl: `-`, match: regexp.MustCompile(`[_\-]{2,}`)},
+	{repl: `unix-tree`, match: regexp.MustCompile(`^tree$`)},
+}
+
+func GetPkgbuildUrl(source, base string) string {
+	if source != "AUR" {
+		return fmt.Sprintf(UrlRepoPkgbuild, encodePackageGitlabUrl(base))
+	}
+	return fmt.Sprintf(UrlAurPkgbuild, base)
+}
+
+func encodePackageGitlabUrl(pkgname string) string {
+	for _, regex := range gitlabRepl {
+		pkgname = regex.match.ReplaceAllString(pkgname, regex.repl)
+	}
+	return pkgname
+}
+
+func GetPkgbuildContent(url string) (string, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return string(b), nil
+}

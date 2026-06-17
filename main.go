@@ -1,80 +1,45 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
-	"github.com/moson-mo/pacseek/internal/args"
-	"github.com/moson-mo/pacseek/internal/config"
-	"github.com/moson-mo/pacseek/internal/pacseek"
+	"github.com/druxorey/drxpkg/internal/config"
+	"github.com/druxorey/drxpkg/internal/tui"
 )
-
-const helpText = `
-Usage: pacseek [OPTION] [SEARCH-TERM]
-	-r 	Limit searching to a comma separated list of repositories
-	-s	Search-term
-	-a	ASCII mode
-	-m	Monochrome mode
-	-u	show upgrades after startup
-	-i	show installed packages after startup
-
-Examples:
-
-pacseek -r core,extra linux
--> Searches for "linux" in the "core" and "extra" repository
-
-pacseek -ui
--> Show installed packages and a list of upgradeable packages
-
-pacseek pacseek
--> Searches for "pacseek" in all repositories
-
-----------------------------------------------------------------
-
-See also:
-
-Manpage: man pacseek
-Wiki:    https://github.com/moson-mo/pacseek/wiki
-
-`
 
 func main() {
 	if os.Getuid() == 0 {
-		fmt.Println("pacseek should not be run as root.")
+		fmt.Println("drxpkg should not be run as root.")
 		os.Exit(1)
 	}
 
-	f := args.Parse()
-	if f.Help {
-		printHelp()
+	showHelp := flag.Bool("h", false, "Show help information")
+	flag.Parse()
+
+	if *showHelp {
+		fmt.Println("drxpkg - Simple Arch Linux / AUR package manager TUI and tracker")
+		fmt.Println("Usage: drxpkg [options]")
+		fmt.Println("Options:")
+		fmt.Println("  -h       Show this help information")
 		os.Exit(0)
 	}
 
 	conf, err := config.Load()
 	if err != nil {
-		if os.IsNotExist(err) && conf != nil {
-			err = conf.Save()
-			if err != nil {
-				printErrorExit("Error saving configuration file", err)
-			}
-		} else {
-			printErrorExit("Error loading configuration file", err)
-		}
+		fmt.Printf("Error loading config: %v\n", err)
+		os.Exit(1)
 	}
-	ps, err := pacseek.New(conf, f)
+
+	appUI, err := tui.New(conf)
 	if err != nil {
-		printErrorExit("Error during pacseek initialization", err)
+		fmt.Printf("Initialization error: %v\n", err)
+		os.Exit(1)
 	}
-	if err = ps.Start(); err != nil {
-		printErrorExit("Error starting pacseek", err)
+
+	if err := appUI.Start(); err != nil {
+		fmt.Printf("Error running application: %v\n", err)
+		os.Exit(1)
 	}
-}
-
-func printErrorExit(message string, err error) {
-	fmt.Printf("%s:\n\n%s\n", message, err.Error())
-	os.Exit(1)
-}
-
-func printHelp() {
-	fmt.Printf("%s", helpText)
 }
