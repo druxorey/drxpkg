@@ -53,6 +53,7 @@ func SearchAur(aurUrl, term string, timeoutMs int, maxResults int) ([]Package, e
 			Source:       "AUR",
 			LastModified: pkg.LastModified,
 			Popularity:   pkg.Popularity,
+			Votes:        pkg.NumVotes,
 		})
 		if len(packages) >= maxResults {
 			break

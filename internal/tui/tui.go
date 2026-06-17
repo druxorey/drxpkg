@@ -32,7 +32,7 @@ type UI struct {
 	// Tab 1: Install Views
 	searchField    *tview.InputField
 	pkgTable       *tview.Table
-	detailsTable   *tview.Table
+	detailsView    *tview.TextView
 	statusText     *tview.TextView
 
 	// State
@@ -123,9 +123,11 @@ func (ui *UI) setupWidgets() {
 		ui.pkgTable.SetBorderColor(tcell.ColorDefault)
 	})
 
-	ui.detailsTable = tview.NewTable().
-		SetSelectable(false, false)
-	ui.detailsTable.SetBorder(true).SetTitle(" Details ")
+	ui.detailsView = tview.NewTextView().
+		SetDynamicColors(true).
+		SetWrap(true).
+		SetWordWrap(true)
+	ui.detailsView.SetBorder(true).SetTitle(" Details ")
 
 	ui.statusText = tview.NewTextView().
 		SetDynamicColors(true)
@@ -134,7 +136,7 @@ func (ui *UI) setupWidgets() {
 	ui.pkgTable.SetSelectionChangedFunc(func(row, column int) {
 		if row <= 0 || row > len(ui.shownPackages) {
 			ui.selectedPkg = nil
-			ui.detailsTable.Clear()
+			ui.detailsView.Clear()
 			return
 		}
 		pkg := ui.shownPackages[row-1]
@@ -153,7 +155,7 @@ func (ui *UI) setupLayout() {
 
 	installPage := tview.NewFlex().SetDirection(tview.FlexColumn).
 		AddItem(installFlex, 0, 1, true).
-		AddItem(ui.detailsTable, 0, 1, false)
+		AddItem(ui.detailsView, 0, 1, false)
 
 	// Tab 2: System Update Placeholder
 	updatePage := tview.NewTextView().
@@ -269,9 +271,19 @@ func (ui *UI) switchTab(tabIndex int) {
 func (ui *UI) setupKeyboard() {
 	// Global captures
 	ui.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyCtrlQ || event.Key() == tcell.KeyEscape {
-			ui.app.Stop()
-			return nil
+		focused := ui.app.GetFocus()
+		_, isInputField := focused.(*tview.InputField)
+
+		if !isInputField {
+			if event.Key() == tcell.KeyEscape || event.Rune() == 'q' || event.Rune() == 'Q' {
+				ui.app.Stop()
+				return nil
+			}
+		} else {
+			if event.Key() == tcell.KeyCtrlQ {
+				ui.app.Stop()
+				return nil
+			}
 		}
 		// F-keys or Alt/Ctrl numbers to switch tabs
 		if event.Key() == tcell.KeyF1 {
@@ -316,7 +328,7 @@ func (ui *UI) setupKeyboard() {
 
 	// Table list captured
 	ui.pkgTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyTAB || event.Key() == tcell.KeyEscape {
+		if event.Key() == tcell.KeyTAB {
 			ui.app.SetFocus(ui.searchField)
 			return nil
 		}
@@ -389,33 +401,42 @@ func (ui *UI) performSearch(term string) {
 			aNameLower := strings.ToLower(a.Name)
 			bNameLower := strings.ToLower(b.Name)
 
-			// 1. Exact match
+			// 1. AUR-specific blended reputation sorting
+			if a.Source == "AUR" && b.Source == "AUR" {
+				aScore := getAurScore(a, term)
+				bScore := getAurScore(b, term)
+				if aScore != bScore {
+					return aScore > bScore
+				}
+			}
+
+			// 2. Exact match
 			aExact := aNameLower == termLower
 			bExact := bNameLower == termLower
 			if aExact != bExact {
 				return aExact
 			}
 
-			// 2. Starts with search term
+			// 3. Starts with search term
 			aStarts := strings.HasPrefix(aNameLower, termLower)
 			bStarts := strings.HasPrefix(bNameLower, termLower)
 			if aStarts != bStarts {
 				return aStarts
 			}
 
-			// 3. Official repository priority (anything not AUR/local is official)
+			// 4. Official repository priority (anything not AUR/local is official)
 			aOfficial := a.Source != "AUR" && a.Source != "local"
 			bOfficial := b.Source != "AUR" && b.Source != "local"
 			if aOfficial != bOfficial {
 				return aOfficial
 			}
 
-			// 4. Shorter name length first (relevance)
+			// 5. Shorter name length first (relevance)
 			if len(a.Name) != len(b.Name) {
 				return len(a.Name) < len(b.Name)
 			}
 
-			// 5. Alphabetical fallback
+			// 6. Alphabetical fallback
 			return a.Name < b.Name
 		})
 
@@ -439,6 +460,7 @@ func (ui *UI) renderPackageTable() {
 	ui.pkgTable.SetCell(0, 0, tview.NewTableCell("Package").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetExpansion(1))
 	ui.pkgTable.SetCell(0, 1, tview.NewTableCell("Source").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(12))
 	ui.pkgTable.SetCell(0, 2, tview.NewTableCell("Installed").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(10))
+	ui.pkgTable.SetCell(0, 3, tview.NewTableCell("Reputation").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(12))
 
 	for idx, p := range ui.shownPackages {
 		installedStr := "No"
@@ -456,9 +478,16 @@ func (ui *UI) renderPackageTable() {
 
 		pkgCell := tview.NewTableCell(p.Name).SetTextColor(tcell.ColorDefault).SetExpansion(1)
 
+		reputationStr := ""
+		if p.Source == "AUR" {
+			reputationStr = strconv.Itoa(p.Votes)
+		}
+		reputationCell := tview.NewTableCell(reputationStr).SetTextColor(tcell.ColorDefault).SetMaxWidth(12)
+
 		ui.pkgTable.SetCell(idx+1, 0, pkgCell)
 		ui.pkgTable.SetCell(idx+1, 1, sourceCell)
 		ui.pkgTable.SetCell(idx+1, 2, installedCell)
+		ui.pkgTable.SetCell(idx+1, 3, reputationCell)
 	}
 	ui.pkgTable.ScrollToBeginning()
 	ui.pkgTable.Select(1, 0)
@@ -480,8 +509,8 @@ func getSourceColor(source string) tcell.Color {
 }
 
 func (ui *UI) loadPackageDetails(pkg Package) {
-	ui.detailsTable.Clear()
-	ui.detailsTable.SetTitle(fmt.Sprintf(" Details: %s ", pkg.Name))
+	ui.detailsView.Clear()
+	ui.detailsView.SetTitle(fmt.Sprintf(" Details: %s ", pkg.Name))
 
 	go func() {
 		var info SearchResults
@@ -495,7 +524,7 @@ func (ui *UI) loadPackageDetails(pkg Package) {
 
 		ui.app.QueueUpdateDraw(func() {
 			if len(info.Results) == 0 {
-				ui.detailsTable.SetCell(0, 0, tview.NewTableCell("Error fetching details").SetTextColor(tcell.ColorRed))
+				ui.detailsView.SetText("[red]Error fetching details")
 				return
 			}
 
@@ -504,37 +533,59 @@ func (ui *UI) loadPackageDetails(pkg Package) {
 				label string
 				value string
 			}{
-				{"Description:  ", record.Description},
-				{"Version:      ", record.Version},
-				{"Local Ver:    ", record.LocalVersion},
-				{"Source:       ", record.Source},
-				{"Architecture: ", record.Architecture},
-				{"URL:          ", record.URL},
-				{"Licenses:     ", strings.Join(record.License, ", ")},
-				{"Maintainer:   ", record.Maintainer},
+				{"Description", record.Description},
+				{"Version", record.Version},
+				{"Local Ver", record.LocalVersion},
+				{"Source", record.Source},
+				{"Architecture", record.Architecture},
+				{"URL", record.URL},
+				{"Licenses", strings.Join(record.License, ", ")},
+				{"Maintainer", record.Maintainer},
 			}
 
-			rowIdx := 0
+			var sb strings.Builder
 			for _, f := range fields {
 				if f.value == "" {
 					continue
 				}
-				ui.detailsTable.SetCell(rowIdx, 0, tview.NewTableCell(f.label).SetTextColor(tcell.ColorBlue))
-				
-				// Handle long values with word wrapping in table cells
-				valCell := tview.NewTableCell(f.value).SetTextColor(tcell.ColorDefault)
-				ui.detailsTable.SetCell(rowIdx, 1, valCell)
-				rowIdx++
+				if f.label == "Description" {
+					sb.WriteString(fmt.Sprintf("[blue]%s:[-]\n%s\n\n", f.label, f.value))
+				} else {
+					sb.WriteString(fmt.Sprintf("[blue]%s:[-] %s\n", f.label, f.value))
+				}
 			}
 
 			// Dependencies
 			if len(record.Depends) > 0 {
-				ui.detailsTable.SetCell(rowIdx, 0, tview.NewTableCell("Dependencies: ").SetTextColor(tcell.ColorBlue))
-				depsStr := strings.Join(record.Depends, ", ")
-				ui.detailsTable.SetCell(rowIdx, 1, tview.NewTableCell(depsStr).SetTextColor(tcell.ColorDefault))
+				sb.WriteString(fmt.Sprintf("\n[blue]Dependencies:[-]\n%s\n", strings.Join(record.Depends, ", ")))
 			}
+
+			ui.detailsView.SetText(sb.String())
+			ui.detailsView.ScrollToBeginning()
 		})
 	}()
+}
+
+func getAurScore(p Package, term string) float64 {
+	nameLower := strings.ToLower(p.Name)
+	termLower := strings.ToLower(term)
+
+	var matchScore float64
+	if nameLower == termLower {
+		matchScore = 5000.0
+	} else if strings.HasPrefix(nameLower, termLower) {
+		matchScore = 2000.0
+	} else if strings.Contains(nameLower, termLower) {
+		matchScore = 500.0
+	} else {
+		matchScore = 0.0
+	}
+
+	nameLen := len(p.Name)
+	if nameLen == 0 {
+		nameLen = 1
+	}
+	return matchScore + float64(p.Votes) + (10.0 / float64(nameLen))
 }
 
 func (ui *UI) installOrUninstallPackage(pkg Package) {

@@ -54,4 +54,5 @@ type Package struct {
 	IsInstalled  bool
 	LastModified int
 	Popularity   float64
+	Votes        int
 }
