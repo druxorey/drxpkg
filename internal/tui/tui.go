@@ -1,13 +1,16 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Jguer/go-alpm/v2"
 	"github.com/gdamore/tcell/v2"
@@ -16,6 +19,13 @@ import (
 	"github.com/druxorey/drxpkg/internal/config"
 	"github.com/druxorey/drxpkg/internal/pkglist"
 )
+
+type cachedPkg struct {
+	Package
+	Description      string
+	NameLower        string
+	DescriptionLower string
+}
 
 type UI struct {
 	conf           *config.Settings
@@ -41,6 +51,12 @@ type UI struct {
 	shownPackages  []Package
 	selectedPkg    *Package
 	searching      bool
+
+	// Fast Search Cache & Debouncing
+	searchMutex  sync.Mutex
+	searchCancel context.CancelFunc
+	searchTimer  *time.Timer
+	pkgsCache    []cachedPkg
 }
 
 func New(conf *config.Settings) (*UI, error) {
@@ -71,6 +87,8 @@ func New(conf *config.Settings) (*UI, error) {
 	ui.setupLayout()
 	ui.setupKeyboard()
 
+	ui.rebuildCache()
+
 	return ui, nil
 }
 
@@ -82,12 +100,16 @@ func (ui *UI) Start() error {
 
 func (ui *UI) reinitPacmanDbs() error {
 	ui.alpmMutex.Lock()
-	defer ui.alpmMutex.Unlock()
 	if ui.alpmHandle != nil {
 		_ = ui.alpmHandle.Release()
 	}
 	var err error
 	ui.alpmHandle, err = InitPacmanDbs(ui.conf.PacmanDbPath, ui.conf.PacmanConfigPath)
+	ui.alpmMutex.Unlock()
+
+	if err == nil {
+		ui.rebuildCache()
+	}
 	return err
 }
 
@@ -104,6 +126,9 @@ func (ui *UI) setupWidgets() {
 		SetFieldTextColor(tcell.ColorDefault).
 		SetFieldBackgroundColor(tcell.ColorDefault)
 	ui.searchField.SetBorder(true).SetBorderColor(tcell.ColorDefault)
+	ui.searchField.SetChangedFunc(func(text string) {
+		ui.handleSearchChange(text)
+	})
 	ui.searchField.SetFocusFunc(func() {
 		ui.searchField.SetBorderColor(tcell.ColorBlue)
 	})
@@ -318,9 +343,7 @@ func (ui *UI) setupKeyboard() {
 	ui.searchField.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
 			term := strings.TrimSpace(ui.searchField.GetText())
-			if term != "" {
-				ui.performSearch(term)
-			}
+			ui.forceSearch(term)
 		} else if key == tcell.KeyTAB || key == tcell.KeyDown {
 			ui.app.SetFocus(ui.pkgTable)
 		}
@@ -342,45 +365,227 @@ func (ui *UI) setupKeyboard() {
 	})
 }
 
-func (ui *UI) performSearch(term string) {
-	if ui.searching {
+func (ui *UI) rebuildCache() {
+	ui.alpmMutex.Lock()
+	defer ui.alpmMutex.Unlock()
+
+	if ui.alpmHandle == nil {
 		return
 	}
-	ui.searching = true
-	ui.lastSearchTerm = term
-	ui.setStatus("Searching...")
 
-	go func() {
-		// ALPM repository search
-		ui.alpmMutex.Lock()
-		reposPkgs, localPkgs, err := SearchRepos(ui.alpmHandle, term, 2000)
-		ui.alpmMutex.Unlock()
+	dbs, err := ui.alpmHandle.SyncDBs()
+	if err != nil {
+		return
+	}
 
-		if err != nil {
-			ui.app.QueueUpdateDraw(func() {
-				ui.setStatus("[red]Search error: " + err.Error())
-				ui.searching = false
+	local, err := ui.alpmHandle.LocalDB()
+	if err != nil {
+		return
+	}
+
+	var cache []cachedPkg
+
+	// Sync DBs
+	for _, db := range dbs.Slice() {
+		for _, pkg := range db.PkgCache().Slice() {
+			cache = append(cache, cachedPkg{
+				Package: Package{
+					Name:         pkg.Name(),
+					Source:       db.Name(),
+					IsInstalled:  local.Pkg(pkg.Name()) != nil,
+					LastModified: int(pkg.BuildDate().Unix()),
+					Popularity:   math.MaxFloat64,
+				},
+				Description:      pkg.Description(),
+				NameLower:        strings.ToLower(pkg.Name()),
+				DescriptionLower: strings.ToLower(pkg.Description()),
 			})
+		}
+	}
+
+	// Local DB (only those not already in sync or representing local modifications)
+	for _, pkg := range local.PkgCache().Slice() {
+		cache = append(cache, cachedPkg{
+			Package: Package{
+				Name:         pkg.Name(),
+				Source:       local.Name(),
+				IsInstalled:  true,
+				LastModified: int(pkg.BuildDate().Unix()),
+				Popularity:   math.MaxFloat64,
+			},
+			Description:      pkg.Description(),
+			NameLower:        strings.ToLower(pkg.Name()),
+			DescriptionLower: strings.ToLower(pkg.Description()),
+		})
+	}
+
+	ui.pkgsCache = cache
+}
+
+func (ui *UI) handleSearchChange(text string) {
+	term := strings.TrimSpace(text)
+	ui.lastSearchTerm = term
+
+	// Instantly update local search results
+	ui.performLocalSearch(term)
+
+	// Schedule debounced remote AUR search
+	ui.scheduleAurSearch(term)
+}
+
+func (ui *UI) performLocalSearch(term string) {
+	if term == "" {
+		ui.shownPackages = nil
+		ui.renderPackageTable()
+		ui.setStatus("")
+		return
+	}
+
+	termLower := strings.ToLower(term)
+	var reposPkgs []Package
+	var localPkgs []Package
+
+	ui.alpmMutex.Lock()
+	for _, cp := range ui.pkgsCache {
+		if strings.Contains(cp.NameLower, termLower) ||
+			strings.Contains(cp.DescriptionLower, termLower) {
+			if cp.Source == "local" {
+				localPkgs = append(localPkgs, cp.Package)
+			} else {
+				reposPkgs = append(reposPkgs, cp.Package)
+			}
+		}
+	}
+	ui.alpmMutex.Unlock()
+
+	allPkgs := append(reposPkgs, localPkgs...)
+
+	uniqueMap := make(map[string]Package)
+	for _, p := range allPkgs {
+		existing, exists := uniqueMap[p.Name]
+		if !exists || (!existing.IsInstalled && p.IsInstalled) {
+			uniqueMap[p.Name] = p
+		}
+	}
+
+	var resultList []Package
+	for _, p := range uniqueMap {
+		resultList = append(resultList, p)
+	}
+
+	sort.Slice(resultList, func(i, j int) bool {
+		a, b := resultList[i], resultList[j]
+		if a.IsInstalled != b.IsInstalled {
+			return a.IsInstalled
+		}
+		aScore := getUnifiedScore(a, term)
+		bScore := getUnifiedScore(b, term)
+		if aScore != bScore {
+			return aScore > bScore
+		}
+		return a.Name < b.Name
+	})
+
+	if len(resultList) > ui.conf.MaxResults {
+		resultList = resultList[:ui.conf.MaxResults]
+	}
+
+	ui.shownPackages = resultList
+	ui.renderPackageTable()
+
+	if len(resultList) == 0 {
+		ui.setStatus("No packages found.")
+	} else {
+		ui.setStatus(fmt.Sprintf("Found %d packages.", len(resultList)))
+	}
+}
+
+func (ui *UI) scheduleAurSearch(term string) {
+	ui.searchMutex.Lock()
+	defer ui.searchMutex.Unlock()
+
+	if ui.searchCancel != nil {
+		ui.searchCancel()
+		ui.searchCancel = nil
+	}
+
+	if ui.searchTimer != nil {
+		ui.searchTimer.Stop()
+		ui.searchTimer = nil
+	}
+
+	if len(term) < 3 || ui.conf.DisableAur {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ui.searchCancel = cancel
+
+	ui.searchTimer = time.AfterFunc(200*time.Millisecond, func() {
+		ui.runAurSearch(ctx, term)
+	})
+}
+
+func (ui *UI) runAurSearch(ctx context.Context, term string) {
+	ui.app.QueueUpdateDraw(func() {
+		if ctx.Err() == nil {
+			ui.setStatus("Searching AUR...")
+		}
+	})
+
+	aurPkgs, err := SearchAur(ctx, "", term, 5000, 2000)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		ui.app.QueueUpdateDraw(func() {
+			ui.setStatus("[red]AUR Search error: " + err.Error())
+		})
+		return
+	}
+
+	installedMap := make(map[string]bool)
+	ui.alpmMutex.Lock()
+	for _, cp := range ui.pkgsCache {
+		if cp.IsInstalled {
+			installedMap[cp.Name] = true
+		}
+	}
+	ui.alpmMutex.Unlock()
+
+	for idx := range aurPkgs {
+		aurPkgs[idx].IsInstalled = installedMap[aurPkgs[idx].Name]
+	}
+
+	if ctx.Err() != nil {
+		return
+	}
+
+	ui.app.QueueUpdateDraw(func() {
+		if ctx.Err() != nil {
 			return
 		}
 
-		// AUR search
-		var aurPkgs []Package
-		if !ui.conf.DisableAur {
-			aurPkgs, _ = SearchAur("", term, 5000, 2000)
-			// Deduplicate AUR search list with local DB
-			for idx := range aurPkgs {
-				ui.alpmMutex.Lock()
-				aurPkgs[idx].IsInstalled = IsPackageInstalled(ui.alpmHandle, aurPkgs[idx].Name)
-				ui.alpmMutex.Unlock()
+		termLower := strings.ToLower(term)
+		var reposPkgs []Package
+		var localPkgs []Package
+
+		ui.alpmMutex.Lock()
+		for _, cp := range ui.pkgsCache {
+			if strings.Contains(cp.NameLower, termLower) ||
+				strings.Contains(cp.DescriptionLower, termLower) {
+				if cp.Source == "local" {
+					localPkgs = append(localPkgs, cp.Package)
+				} else {
+					reposPkgs = append(reposPkgs, cp.Package)
+				}
 			}
 		}
+		ui.alpmMutex.Unlock()
 
-		// Merge
 		allPkgs := append(reposPkgs, localPkgs...)
 		allPkgs = append(allPkgs, aurPkgs...)
 
-		// Deduplicate and filter results
 		uniqueMap := make(map[string]Package)
 		for _, p := range allPkgs {
 			existing, exists := uniqueMap[p.Name]
@@ -394,7 +599,6 @@ func (ui *UI) performSearch(term string) {
 			resultList = append(resultList, p)
 		}
 
-		// Sort packages by search term relevance using the unified scoring function
 		sort.Slice(resultList, func(i, j int) bool {
 			a, b := resultList[i], resultList[j]
 			if a.IsInstalled != b.IsInstalled {
@@ -408,22 +612,46 @@ func (ui *UI) performSearch(term string) {
 			return a.Name < b.Name
 		})
 
-		// Slice to MaxResults to respect configured visual limits
 		if len(resultList) > ui.conf.MaxResults {
 			resultList = resultList[:ui.conf.MaxResults]
 		}
 
-		ui.app.QueueUpdateDraw(func() {
-			ui.shownPackages = resultList
-			ui.renderPackageTable()
-			ui.searching = false
-			if len(resultList) == 0 {
-				ui.setStatus("No packages found.")
-			} else {
-				ui.setStatus(fmt.Sprintf("Found %d packages.", len(resultList)))
-			}
-		})
-	}()
+		ui.shownPackages = resultList
+		ui.renderPackageTable()
+
+		if len(resultList) == 0 {
+			ui.setStatus("No packages found.")
+		} else {
+			ui.setStatus(fmt.Sprintf("Found %d packages (incl. AUR).", len(resultList)))
+		}
+	})
+}
+
+func (ui *UI) forceSearch(term string) {
+	ui.searchMutex.Lock()
+	defer ui.searchMutex.Unlock()
+
+	if ui.searchCancel != nil {
+		ui.searchCancel()
+		ui.searchCancel = nil
+	}
+
+	if ui.searchTimer != nil {
+		ui.searchTimer.Stop()
+		ui.searchTimer = nil
+	}
+
+	ui.lastSearchTerm = term
+	ui.performLocalSearch(term)
+
+	if ui.conf.DisableAur || term == "" {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ui.searchCancel = cancel
+
+	go ui.runAurSearch(ctx, term)
 }
 
 func (ui *UI) renderPackageTable() {
@@ -545,7 +773,7 @@ func getUnifiedScore(p Package, term string) float64 {
 
 	var matchScore float64
 	if nameLower == termLower {
-		matchScore = 100000.0
+		matchScore = 1000000.0
 	} else if strings.HasPrefix(nameLower, termLower) {
 		matchScore = 30000.0
 	} else if strings.Contains(nameLower, termLower) {
@@ -560,8 +788,8 @@ func getUnifiedScore(p Package, term string) float64 {
 		sourceBonus = 5000.0
 	}
 
-	// Reputation (AUR votes)
-	reputation := float64(p.Votes)
+	// Reputation (AUR votes) heavily weighted
+	reputation := float64(p.Votes) * 30.0
 
 	// Name length tie-breaker (shorter names get a small bonus)
 	nameLen := len(p.Name)
@@ -623,7 +851,7 @@ func (ui *UI) installOrUninstallPackage(pkg Package) {
 
 	_ = ui.reinitPacmanDbs()
 	if ui.lastSearchTerm != "" {
-		ui.performSearch(ui.lastSearchTerm)
+		ui.forceSearch(ui.lastSearchTerm)
 	}
 }
 

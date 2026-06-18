@@ -78,26 +78,18 @@ func TestPopularApplicationsSorting(t *testing.T) {
 		term := "zen"
 		results := sortPackages(mockPool, term)
 
-		// Top 3 should be starts-with matches: zenith (official), zenity (official), zen-browser-bin (AUR)
-		// zenith score: 30000 + 5000 + 0 + 100/6 = 35016.66
-		// zenity score: 30000 + 5000 + 0 + 100/6 = 35016.66
-		// zen-browser-bin score: 30000 + 0 + 450 + 100/15 = 30456.66
+		// zen-browser-bin (starts-with, AUR, 450 votes) score: 30000 + 0 + 450*30 = 43500
+		// zenith (starts-with, official) score: 30000 + 5000 = 35000
+		// zenity (starts-with, official) score: 30000 + 5000 = 35000
 
-		if results[0].Name != "zenith" && results[0].Name != "zenity" {
-			t.Errorf("expected zenith or zenity at rank 0, got %s", results[0].Name)
+		if results[0].Name != "zen-browser-bin" {
+			t.Errorf("expected zen-browser-bin at rank 0, got %s", results[0].Name)
 		}
 		if results[1].Name != "zenith" && results[1].Name != "zenity" {
 			t.Errorf("expected zenith or zenity at rank 1, got %s", results[1].Name)
 		}
-		if results[2].Name != "zen-browser-bin" {
-			t.Errorf("expected zen-browser-bin at rank 2, got %s", results[2].Name)
-		}
-
-		// Ensure zen-browser-bin is properly intercalated above contains matches like libzen (official) and autozen (AUR)
-		for i := 3; i < len(results); i++ {
-			if results[i].Name == "zen-browser-bin" {
-				t.Errorf("zen-browser-bin should have been in the top 3, found at index %d", i)
-			}
+		if results[2].Name != "zenith" && results[2].Name != "zenity" {
+			t.Errorf("expected zenith or zenity at rank 2, got %s", results[2].Name)
 		}
 	})
 
@@ -105,20 +97,20 @@ func TestPopularApplicationsSorting(t *testing.T) {
 		term := "chrome"
 		results := sortPackages(mockPool, term)
 
-		// chrome-remote-desktop (starts-with, AUR, 127 votes) score: 30000 + 0 + 127 + 100/21 = 30131.76
-		// chrome-devtools-mcp (starts-with, AUR, 0 votes) score: 30000 + 0 + 0 + 100/19 = 30005.26
-		// google-chrome (contains, AUR, 2355 votes) score: 10000 + 0 + 2355 + 100/13 = 12362.69
-		// chromium (description-only, official) score: 1000 + 5000 + 0 + 100/8 = 6012.50
-		// libcamera (description-only, official) score: 1000 + 5000 + 0 + 100/9 = 6011.11
+		// google-chrome (contains, AUR, 2355 votes) score: 10000 + 0 + 2355*30 = 80650
+		// chrome-remote-desktop (starts-with, AUR, 127 votes) score: 30000 + 0 + 127*30 = 33810
+		// chrome-devtools-mcp (starts-with, AUR, 0 votes) score: 30000 + 0 + 0 = 30000
+		// chromium (description-only, official) score: 1000 + 5000 = 6000
+		// libcamera (description-only, official) score: 1000 + 5000 = 6000
 
 		// Verify order:
-		// 1. chrome-remote-desktop
-		// 2. chrome-devtools-mcp
-		// 3. google-chrome
+		// 1. google-chrome
+		// 2. chrome-remote-desktop
+		// 3. chrome-devtools-mcp
 		// 4. chromium
 		// 5. libcamera
 
-		expected := []string{"chrome-remote-desktop", "chrome-devtools-mcp", "google-chrome", "chromium", "libcamera"}
+		expected := []string{"google-chrome", "chrome-remote-desktop", "chrome-devtools-mcp", "chromium", "libcamera"}
 		for idx, name := range expected {
 			if results[idx].Name != name {
 				t.Errorf("at index %d: expected %s, got %s", idx, name, results[idx].Name)
@@ -141,11 +133,11 @@ func TestPopularApplicationsSorting(t *testing.T) {
 			t.Errorf("expected installed package my-chrome-theme to be at rank 0, got %s", results[0].Name)
 		}
 		
-		if results[1].Name != "chrome-remote-desktop" {
-			t.Errorf("expected chrome-remote-desktop at rank 1, got %s", results[1].Name)
+		if results[1].Name != "google-chrome" {
+			t.Errorf("expected google-chrome at rank 1, got %s", results[1].Name)
 		}
-		if results[2].Name != "google-chrome" {
-			t.Errorf("expected google-chrome at rank 2, got %s", results[2].Name)
+		if results[2].Name != "chrome-remote-desktop" {
+			t.Errorf("expected chrome-remote-desktop at rank 2, got %s", results[2].Name)
 		}
 		if results[3].Name != "chromium" {
 			t.Errorf("expected chromium at rank 3, got %s", results[3].Name)

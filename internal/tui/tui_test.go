@@ -3,6 +3,9 @@ package tui
 import (
 	"sort"
 	"testing"
+
+	"github.com/druxorey/drxpkg/internal/config"
+	"github.com/rivo/tview"
 )
 
 func TestGetPkgbuildUrl(t *testing.T) {
@@ -58,17 +61,17 @@ func TestGetAurScore(t *testing.T) {
 	scoreSubHigh := getUnifiedScore(pSubHigh, term)
 	scoreSubLow := getUnifiedScore(pSubLow, term)
 
-	if scoreExact <= scorePrefixHigh {
-		t.Errorf("expected scoreExact (%f) to be higher than scorePrefixHigh (%f)", scoreExact, scorePrefixHigh)
+	if scoreExact <= scoreSubHigh {
+		t.Errorf("expected scoreExact (%f) to be higher than scoreSubHigh (%f)", scoreExact, scoreSubHigh)
+	}
+	if scoreSubHigh <= scorePrefixHigh {
+		t.Errorf("expected scoreSubHigh (%f) to be higher than scorePrefixHigh (%f)", scoreSubHigh, scorePrefixHigh)
 	}
 	if scorePrefixHigh <= scorePrefixLow {
 		t.Errorf("expected scorePrefixHigh (%f) to be higher than scorePrefixLow (%f)", scorePrefixHigh, scorePrefixLow)
 	}
-	if scorePrefixLow <= scoreSubHigh {
-		t.Errorf("expected scorePrefixLow (%f) to be higher than scoreSubHigh (%f)", scorePrefixLow, scoreSubHigh)
-	}
-	if scoreSubHigh <= scoreSubLow {
-		t.Errorf("expected scoreSubHigh (%f) to be higher than scoreSubLow (%f)", scoreSubHigh, scoreSubLow)
+	if scorePrefixLow <= scoreSubLow {
+		t.Errorf("expected scorePrefixLow (%f) to be higher than scoreSubLow (%f)", scorePrefixLow, scoreSubLow)
 	}
 }
 
@@ -96,11 +99,70 @@ func TestAurSorting(t *testing.T) {
 		return a.Name < b.Name
 	})
 
-	expectedOrder := []string{"chrome", "chrome-bin", "chrome-git", "google-chrome", "my-chrome-theme"}
+	expectedOrder := []string{"chrome", "google-chrome", "chrome-bin", "chrome-git", "my-chrome-theme"}
 	for idx, p := range pkgs {
 		if p.Name != expectedOrder[idx] {
 			t.Errorf("at index %d: expected %s, got %s", idx, expectedOrder[idx], p.Name)
 		}
 	}
 }
+
+func TestPerformLocalSearch(t *testing.T) {
+	conf := &config.Settings{
+		MaxResults: 10,
+	}
+
+	ui := &UI{
+		conf:       conf,
+		pkgTable:   tview.NewTable(),
+		statusText: tview.NewTextView(),
+		pkgsCache: []cachedPkg{
+			{
+				Package:          Package{Name: "firefox", Source: "extra", IsInstalled: false},
+				Description:      "Fast, Private and Safe Web Browser",
+				NameLower:        "firefox",
+				DescriptionLower: "fast, private and safe web browser",
+			},
+			{
+				Package:          Package{Name: "firefox-developer-edition", Source: "extra", IsInstalled: true},
+				Description:      "Developer edition of Firefox",
+				NameLower:        "firefox-developer-edition",
+				DescriptionLower: "developer edition of firefox",
+			},
+			{
+				Package:          Package{Name: "chromium", Source: "extra", IsInstalled: false},
+				Description:      "A web browser built for speed, simplicity, and security",
+				NameLower:        "chromium",
+				DescriptionLower: "a web browser built for speed, simplicity, and security",
+			},
+		},
+	}
+
+	// Test exact match / filtering
+	ui.performLocalSearch("firefox")
+	if len(ui.shownPackages) != 2 {
+		t.Fatalf("expected 2 packages matching 'firefox', got %d", len(ui.shownPackages))
+	}
+
+	// The installed package (firefox-developer-edition) should be sorted first
+	if ui.shownPackages[0].Name != "firefox-developer-edition" {
+		t.Errorf("expected firefox-developer-edition to be first, got %s", ui.shownPackages[0].Name)
+	}
+
+	// Test description match
+	ui.performLocalSearch("speed")
+	if len(ui.shownPackages) != 1 {
+		t.Fatalf("expected 1 package matching 'speed', got %d", len(ui.shownPackages))
+	}
+	if ui.shownPackages[0].Name != "chromium" {
+		t.Errorf("expected chromium, got %s", ui.shownPackages[0].Name)
+	}
+
+	// Test empty term
+	ui.performLocalSearch("")
+	if len(ui.shownPackages) != 0 {
+		t.Errorf("expected 0 packages on empty search, got %d", len(ui.shownPackages))
+	}
+}
+
 

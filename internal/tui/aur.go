@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,7 +13,7 @@ import (
 
 const DefaultAurRpcUrl = "https://aur.archlinux.org/rpc"
 
-func SearchAur(aurUrl, term string, timeoutMs int, maxResults int) ([]Package, error) {
+func SearchAur(ctx context.Context, aurUrl, term string, timeoutMs int, maxResults int) ([]Package, error) {
 	packages := []Package{}
 	if aurUrl == "" {
 		aurUrl = DefaultAurRpcUrl
@@ -22,7 +23,7 @@ func SearchAur(aurUrl, term string, timeoutMs int, maxResults int) ([]Package, e
 		Timeout: time.Duration(timeoutMs) * time.Millisecond,
 	}
 
-	req, err := http.NewRequest("GET", aurUrl+"?v=5&type=search&by=name&arg="+url.QueryEscape(term), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", aurUrl+"?v=5&type=search&by=name&arg="+url.QueryEscape(term), nil)
 	if err != nil {
 		return packages, err
 	}
