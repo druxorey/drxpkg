@@ -52,6 +52,15 @@ type UI struct {
 	detailsView *tview.TextView
 	statusText  *tview.TextView
 
+	// Tab 2: Update Views
+	updatePageFlex    *tview.Flex
+	updateTable       *tview.Table
+	updateDetails     *tview.TextView
+	updatePackages    []UpdatePackage
+	selectedUpdate    *UpdatePackage
+	updateDetailsCache map[string]string
+	cacheMutex         sync.RWMutex
+
 	// State
 	activeTab      int
 	lastSearchTerm string
@@ -79,9 +88,10 @@ func New(conf *config.Settings) (*UI, error) {
 	tview.Styles.TertiaryTextColor = tcell.ColorDefault
 
 	ui := &UI{
-		conf:      conf,
-		app:       tview.NewApplication(),
-		activeTab: 0,
+		conf:               conf,
+		app:                tview.NewApplication(),
+		activeTab:          0,
+		updateDetailsCache: make(map[string]string),
 	}
 
 	var err error
@@ -95,6 +105,7 @@ func New(conf *config.Settings) (*UI, error) {
 	ui.setupKeyboard()
 
 	ui.rebuildCache()
+	ui.backgroundUpdateCheck()
 
 	return ui, nil
 }
@@ -175,6 +186,7 @@ func (ui *UI) setupWidgets() {
 		ui.selectedPkg = &pkg
 		ui.loadPackageDetails(pkg)
 	})
+	ui.setupUpdatePage()
 	ui.setupSettingsPanel()
 }
 
@@ -190,11 +202,7 @@ func (ui *UI) setupLayout() {
 		AddItem(installFlex, 0, 1, true).
 		AddItem(ui.detailsView, 0, 1, false)
 
-	// Tab 2: System Update Placeholder
-	updatePage := tview.NewTextView().
-		SetDynamicColors(true).
-		SetTextAlign(tview.AlignCenter).
-		SetText("\n\n[blue]System Update[-]\n\nThis page is currently a placeholder.")
+
 
 	// Tab 3: Package Management Placeholder
 	managePage := tview.NewTextView().
@@ -204,7 +212,7 @@ func (ui *UI) setupLayout() {
 
 	// Tab 4: Settings Page
 	ui.pages.AddPage("install", installPage, true, true)
-	ui.pages.AddPage("update", updatePage, true, false)
+	ui.pages.AddPage("update", ui.updatePageFlex, true, false)
 	ui.pages.AddPage("manage", managePage, true, false)
 	ui.pages.AddPage("settings", ui.settingsGrid, true, false)
 
@@ -243,6 +251,8 @@ func (ui *UI) switchTab(tabIndex int) {
 		ui.app.SetFocus(ui.searchField)
 	case 1:
 		ui.pages.SwitchToPage("update")
+		ui.app.SetFocus(ui.updateTable)
+		ui.checkForUpdates()
 	case 2:
 		ui.pages.SwitchToPage("manage")
 	case 3:
