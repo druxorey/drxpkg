@@ -1,3 +1,4 @@
+// Package config does somethin
 package config
 
 import (
@@ -8,7 +9,7 @@ import (
 
 type Settings struct {
 	PackagesPath     string `json:"packages_path"`
-	PacmanDbPath     string `json:"pacman_db_path"`
+	PacmanDBPath     string `json:"pacman_db_path"`
 	PacmanConfigPath string `json:"pacman_config_path"`
 	InstallCommand   string `json:"install_command"`
 	UninstallCommand string `json:"uninstall_command"`
@@ -19,13 +20,13 @@ type Settings struct {
 
 func Defaults() *Settings {
 	return &Settings{
-		PackagesPath:     "",
-		PacmanDbPath:     "/var/lib/pacman/",
+		PackagesPath:     "$HOME/.local/share/",
+		PacmanDBPath:     "/var/lib/pacman/",
 		PacmanConfigPath: "/etc/pacman.conf",
 		InstallCommand:   "yay -S",
 		UninstallCommand: "yay -Rs",
 		SysUpgradeCmd:    "yay",
-		MaxResults:       50,
+		MaxResults:       300,
 		DisableAur:       false,
 	}
 }

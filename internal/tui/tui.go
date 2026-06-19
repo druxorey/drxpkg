@@ -1,3 +1,4 @@
+// Package tui does something
 package tui
 
 import (
@@ -28,29 +29,35 @@ type cachedPkg struct {
 }
 
 type UI struct {
-	conf           *config.Settings
-	app            *tview.Application
-	alpmHandle     *alpm.Handle
-	alpmMutex      sync.Mutex
+	conf       *config.Settings
+	app        *tview.Application
+	alpmHandle *alpm.Handle
+	alpmMutex  sync.Mutex
 
 	// Main Layout
-	grid           *tview.Grid
-	tabBar         *tview.TextView
-	pages          *tview.Pages
-	formSettings   *tview.Form
+	grid                 *tview.Grid
+	tabBar               *tview.TextView
+	pages                *tview.Pages
+	settingsGrid         *tview.Grid
+	settingInputs        []*tview.InputField
+	settingAurCb         *tview.Checkbox
+	btnSave              *tview.TextView
+	btnDefaults          *tview.TextView
+	settingsFocusedIndex int
+	settingsEditMode     bool
 
 	// Tab 1: Install Views
-	searchField    *tview.InputField
-	pkgTable       *tview.Table
-	detailsView    *tview.TextView
-	statusText     *tview.TextView
+	searchField *tview.InputField
+	pkgTable    *tview.Table
+	detailsView *tview.TextView
+	statusText  *tview.TextView
 
 	// State
 	activeTab      int
 	lastSearchTerm string
 	shownPackages  []Package
 	selectedPkg    *Package
-	searching      bool
+	// searching      bool
 
 	// Fast Search Cache & Debouncing
 	searchMutex  sync.Mutex
@@ -78,7 +85,7 @@ func New(conf *config.Settings) (*UI, error) {
 	}
 
 	var err error
-	ui.alpmHandle, err = InitPacmanDbs(conf.PacmanDbPath, conf.PacmanConfigPath)
+	ui.alpmHandle, err = InitPacmanDbs(conf.PacmanDBPath, conf.PacmanConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to init pacman db: %w", err)
 	}
@@ -104,7 +111,7 @@ func (ui *UI) reinitPacmanDbs() error {
 		_ = ui.alpmHandle.Release()
 	}
 	var err error
-	ui.alpmHandle, err = InitPacmanDbs(ui.conf.PacmanDbPath, ui.conf.PacmanConfigPath)
+	ui.alpmHandle, err = InitPacmanDbs(ui.conf.PacmanDBPath, ui.conf.PacmanConfigPath)
 	ui.alpmMutex.Unlock()
 
 	if err == nil {
@@ -168,6 +175,7 @@ func (ui *UI) setupWidgets() {
 		ui.selectedPkg = &pkg
 		ui.loadPackageDetails(pkg)
 	})
+	ui.setupSettingsPanel()
 }
 
 func (ui *UI) setupLayout() {
@@ -195,60 +203,10 @@ func (ui *UI) setupLayout() {
 		SetText("\n\n[blue]Package Management[-]\n\nThis page is currently a placeholder.")
 
 	// Tab 4: Settings Page
-	ui.formSettings = tview.NewForm()
-	ui.formSettings.SetBorder(true).SetTitle(" Settings ")
-	ui.formSettings.SetLabelColor(tcell.ColorBlue).
-		SetFieldTextColor(tcell.ColorWhite).
-		SetFieldBackgroundColor(tcell.ColorDefault)
-
-	ui.formSettings.AddInputField("Packages Save Path", ui.conf.PackagesPath, 50, nil, nil)
-	ui.formSettings.AddInputField("Pacman DB Path", ui.conf.PacmanDbPath, 50, nil, nil)
-	ui.formSettings.AddInputField("Pacman Config Path", ui.conf.PacmanConfigPath, 50, nil, nil)
-	ui.formSettings.AddInputField("Install Command", ui.conf.InstallCommand, 50, nil, nil)
-	ui.formSettings.AddInputField("Uninstall Command", ui.conf.UninstallCommand, 50, nil, nil)
-	ui.formSettings.AddInputField("Upgrade Command", ui.conf.SysUpgradeCmd, 50, nil, nil)
-	ui.formSettings.AddInputField("Max Results", strconv.Itoa(ui.conf.MaxResults), 10, nil, nil)
-	ui.formSettings.AddCheckbox("Disable AUR", ui.conf.DisableAur, nil)
-
-	ui.formSettings.AddButton("Apply & Save", func() {
-		ui.conf.PackagesPath = ui.formSettings.GetFormItem(0).(*tview.InputField).GetText()
-		ui.conf.PacmanDbPath = ui.formSettings.GetFormItem(1).(*tview.InputField).GetText()
-		ui.conf.PacmanConfigPath = ui.formSettings.GetFormItem(2).(*tview.InputField).GetText()
-		ui.conf.InstallCommand = ui.formSettings.GetFormItem(3).(*tview.InputField).GetText()
-		ui.conf.UninstallCommand = ui.formSettings.GetFormItem(4).(*tview.InputField).GetText()
-		ui.conf.SysUpgradeCmd = ui.formSettings.GetFormItem(5).(*tview.InputField).GetText()
-		
-		maxRes, err := strconv.Atoi(ui.formSettings.GetFormItem(6).(*tview.InputField).GetText())
-		if err == nil {
-			ui.conf.MaxResults = maxRes
-		}
-		
-		ui.conf.DisableAur = ui.formSettings.GetFormItem(7).(*tview.Checkbox).IsChecked()
-
-		if err := ui.conf.Save(); err != nil {
-			ui.setStatus("Error saving settings: " + err.Error())
-		} else {
-			ui.setStatus("Settings saved successfully!")
-		}
-		_ = ui.reinitPacmanDbs()
-	})
-
-	ui.formSettings.AddButton("Defaults", func() {
-		ui.conf = config.Defaults()
-		ui.formSettings.GetFormItem(0).(*tview.InputField).SetText(ui.conf.PackagesPath)
-		ui.formSettings.GetFormItem(1).(*tview.InputField).SetText(ui.conf.PacmanDbPath)
-		ui.formSettings.GetFormItem(2).(*tview.InputField).SetText(ui.conf.PacmanConfigPath)
-		ui.formSettings.GetFormItem(3).(*tview.InputField).SetText(ui.conf.InstallCommand)
-		ui.formSettings.GetFormItem(4).(*tview.InputField).SetText(ui.conf.UninstallCommand)
-		ui.formSettings.GetFormItem(5).(*tview.InputField).SetText(ui.conf.SysUpgradeCmd)
-		ui.formSettings.GetFormItem(6).(*tview.InputField).SetText(strconv.Itoa(ui.conf.MaxResults))
-		ui.formSettings.GetFormItem(7).(*tview.Checkbox).SetChecked(ui.conf.DisableAur)
-	})
-
 	ui.pages.AddPage("install", installPage, true, true)
 	ui.pages.AddPage("update", updatePage, true, false)
 	ui.pages.AddPage("manage", managePage, true, false)
-	ui.pages.AddPage("settings", ui.formSettings, true, false)
+	ui.pages.AddPage("settings", ui.settingsGrid, true, false)
 
 	// Main Grid Layout
 	ui.grid = tview.NewGrid().
@@ -289,7 +247,7 @@ func (ui *UI) switchTab(tabIndex int) {
 		ui.pages.SwitchToPage("manage")
 	case 3:
 		ui.pages.SwitchToPage("settings")
-		ui.app.SetFocus(ui.formSettings)
+		ui.app.SetFocus(ui.settingsGrid)
 	}
 }
 
@@ -341,10 +299,11 @@ func (ui *UI) setupKeyboard() {
 
 	// Search input captured
 	ui.searchField.SetDoneFunc(func(key tcell.Key) {
-		if key == tcell.KeyEnter {
+		switch key {
+		case tcell.KeyEnter:
 			term := strings.TrimSpace(ui.searchField.GetText())
 			ui.forceSearch(term)
-		} else if key == tcell.KeyTAB || key == tcell.KeyDown {
+		case tcell.KeyTAB, tcell.KeyDown:
 			ui.app.SetFocus(ui.pkgTable)
 		}
 	})
@@ -750,15 +709,15 @@ func (ui *UI) loadPackageDetails(pkg Package) {
 					continue
 				}
 				if f.label == "Description" {
-					sb.WriteString(fmt.Sprintf("[blue]%s:[-]\n%s\n\n", f.label, f.value))
+					fmt.Fprintf(&sb, "[blue]%s:[-]\n%s\n\n", f.label, f.value)
 				} else {
-					sb.WriteString(fmt.Sprintf("[blue]%s:[-] %s\n", f.label, f.value))
+					fmt.Fprintf(&sb, "[blue]%s:[-] %s\n", f.label, f.value)
 				}
 			}
 
 			// Dependencies
 			if len(record.Depends) > 0 {
-				sb.WriteString(fmt.Sprintf("\n[blue]Dependencies:[-]\n%s\n", strings.Join(record.Depends, ", ")))
+				fmt.Fprintf(&sb, "\n[blue]Dependencies:[-]\n%s\n", strings.Join(record.Depends, ", "))
 			}
 
 			ui.detailsView.SetText(sb.String())
@@ -836,15 +795,15 @@ func (ui *UI) installOrUninstallPackage(pkg Package) {
 			// Success! Auto-track in pkglist
 			if isInstall {
 				_ = pkglist.AddPackage(ui.conf.PackagesPath, pkg.Name)
-				fmt.Printf("\n[SUCCESS] Package '%s' installed and added to drxboot.packages.\n", pkg.Name)
+				fmt.Printf("\033[1;32m[SUCCESS]\033[0m Package '%s' installed and added to drxboot.packages.\n", pkg.Name)
 			} else {
 				_ = pkglist.RemovePackage(ui.conf.PackagesPath, pkg.Name)
-				fmt.Printf("\n[SUCCESS] Package '%s' uninstalled and removed from drxboot.packages.\n", pkg.Name)
+				fmt.Printf("\033[1;32m[SUCCESS]\033[0m Package '%s' uninstalled and removed from drxboot.packages.\n", pkg.Name)
 			}
-			fmt.Println("Press ENTER to return to drxpkg...")
+			fmt.Println("\nPress ENTER to return to drxpkg...")
 			_, _ = os.Stdin.Read(make([]byte, 1))
 		} else {
-			fmt.Printf("\n[ERROR] Command failed: %v\nPress ENTER to return to drxpkg...", err)
+			fmt.Printf("\033[1;31m[ERROR]\033[0m Command failed: %v\nPress ENTER to return to drxpkg...", err)
 			_, _ = os.Stdin.Read(make([]byte, 1))
 		}
 	})
@@ -857,4 +816,281 @@ func (ui *UI) installOrUninstallPackage(pkg Package) {
 
 func (ui *UI) setStatus(msg string) {
 	ui.statusText.SetText(msg)
+}
+
+func (ui *UI) setupSettingsPanel() {
+	// Initialize inputs
+	ui.settingInputs = make([]*tview.InputField, 7)
+	ui.settingInputs[0] = tview.NewInputField().SetText(ui.conf.PackagesPath)
+	ui.settingInputs[1] = tview.NewInputField().SetText(ui.conf.PacmanDBPath)
+	ui.settingInputs[2] = tview.NewInputField().SetText(ui.conf.PacmanConfigPath)
+	ui.settingInputs[3] = tview.NewInputField().SetText(ui.conf.InstallCommand)
+	ui.settingInputs[4] = tview.NewInputField().SetText(ui.conf.UninstallCommand)
+	ui.settingInputs[5] = tview.NewInputField().SetText(ui.conf.SysUpgradeCmd)
+	ui.settingInputs[6] = tview.NewInputField().SetText(strconv.Itoa(ui.conf.MaxResults))
+
+	for i, input := range ui.settingInputs {
+		idx := i
+		input.SetBorder(true).SetBorderColor(tcell.ColorGray)
+		input.SetFieldBackgroundColor(tcell.ColorDefault)
+		input.SetFieldTextColor(tcell.ColorDefault)
+
+		input.SetFocusFunc(func() {
+			ui.settingsFocusedIndex = idx
+			ui.settingsEditMode = true
+			ui.updateSettingsDisplay()
+		})
+
+		input.SetBlurFunc(func() {
+			ui.settingsEditMode = false
+			ui.updateSettingsDisplay()
+		})
+
+		input.SetDoneFunc(func(key tcell.Key) {
+			if key == tcell.KeyEnter || key == tcell.KeyEscape {
+				ui.settingsEditMode = false
+				ui.app.SetFocus(ui.settingsGrid)
+				ui.updateSettingsDisplay()
+			}
+		})
+	}
+
+	// Initialize checkbox
+	ui.settingAurCb = tview.NewCheckbox().SetLabel("").SetChecked(ui.conf.DisableAur)
+	ui.settingAurCb.SetFocusFunc(func() {
+		ui.settingsFocusedIndex = 7
+		ui.updateSettingsDisplay()
+	})
+
+	// Initialize buttons
+	ui.btnSave = tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignCenter)
+	ui.btnDefaults = tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignCenter)
+
+	// Settings Box layout (centered inside grid)
+	settingsBox := tview.NewFlex().SetDirection(tview.FlexRow)
+	settingsBox.SetBorder(true).
+		SetTitle(" Settings ").
+		SetBorderColor(tcell.ColorBlue).
+		SetTitleColor(tcell.ColorBlue)
+
+	// Fields Grid: 7 inputs (height 3 each), 1 checkbox (height 1)
+	fieldsGrid := tview.NewGrid().
+		SetRows(3, 3, 3, 3, 3, 3, 3, 3).
+		SetColumns(25, 0)
+
+	labels := []string{
+		"Packages Save Path",
+		"Pacman DB Path",
+		"Pacman Config Path",
+		"Install Command",
+		"Uninstall Command",
+		"Upgrade Command",
+		"Max Results",
+		"Disable AUR",
+	}
+
+	for i, name := range labels {
+		lblText := "  " + name
+		if i < 7 {
+			lblText = "\n" + lblText
+		}
+		lbl := tview.NewTextView().SetDynamicColors(true).SetText(lblText)
+		lbl.SetTextColor(tcell.ColorDefault)
+
+		if i < 7 {
+			fieldsGrid.AddItem(lbl, i, 0, 1, 1, 0, 0, false)
+			fieldsGrid.AddItem(ui.settingInputs[i], i, 1, 1, 1, 0, 0, false)
+		} else {
+			fieldsGrid.AddItem(lbl, i, 0, 1, 1, 0, 0, false)
+			fieldsGrid.AddItem(ui.settingAurCb, i, 1, 1, 1, 0, 0, false)
+		}
+	}
+
+	// Buttons Flex Row
+	buttonsFlex := tview.NewFlex().SetDirection(tview.FlexColumn).
+		AddItem(nil, 0, 1, false).
+		AddItem(ui.btnSave, 18, 0, false).
+		AddItem(nil, 4, 0, false).
+		AddItem(ui.btnDefaults, 14, 0, false).
+		AddItem(nil, 0, 1, false)
+
+	settingsBox.
+		AddItem(fieldsGrid, 0, 1, false).
+		AddItem(nil, 1, 0, false). // spacer
+		AddItem(buttonsFlex, 2, 0, false).
+		AddItem(nil, 1, 0, false) // spacer
+
+	// Center the settingsBox using a grid
+	ui.settingsGrid = tview.NewGrid().
+		SetRows(0, 28, 0).
+		SetColumns(0, 75, 0).
+		AddItem(settingsBox, 1, 1, 1, 1, 0, 0, true)
+
+	// Set input capture on settingsGrid for navigation
+	ui.settingsGrid.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if ui.settingsEditMode {
+			return event
+		}
+
+		switch event.Key() {
+		case tcell.KeyUp:
+			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 9) % 10
+			ui.updateSettingsDisplay()
+			return nil
+		case tcell.KeyDown:
+			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 1) % 10
+			ui.updateSettingsDisplay()
+			return nil
+		case tcell.KeyLeft:
+			if ui.settingsFocusedIndex == 9 {
+				ui.settingsFocusedIndex = 8
+				ui.updateSettingsDisplay()
+				return nil
+			}
+		case tcell.KeyRight:
+			if ui.settingsFocusedIndex == 8 {
+				ui.settingsFocusedIndex = 9
+				ui.updateSettingsDisplay()
+				return nil
+			}
+		case tcell.KeyTAB:
+			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 1) % 10
+			ui.updateSettingsDisplay()
+			return nil
+		case tcell.KeyBacktab:
+			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 9) % 10
+			ui.updateSettingsDisplay()
+			return nil
+		case tcell.KeyEnter:
+			ui.handleSettingsSelect()
+			return nil
+		}
+
+		switch event.Rune() {
+		case 'j', 'J':
+			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 1) % 10
+			ui.updateSettingsDisplay()
+			return nil
+		case 'k', 'K':
+			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 9) % 10
+			ui.updateSettingsDisplay()
+			return nil
+		case 'h', 'H':
+			if ui.settingsFocusedIndex == 9 {
+				ui.settingsFocusedIndex = 8
+				ui.updateSettingsDisplay()
+				return nil
+			}
+		case 'l', 'L':
+			if ui.settingsFocusedIndex == 8 {
+				ui.settingsFocusedIndex = 9
+				ui.updateSettingsDisplay()
+				return nil
+			}
+		case 'i', 'I':
+			ui.handleSettingsSelect()
+			return nil
+		}
+
+		return event
+	})
+
+	ui.updateSettingsDisplay()
+}
+
+func (ui *UI) updateSettingsDisplay() {
+	// Reset all inputs border color
+	for i, input := range ui.settingInputs {
+		if i == ui.settingsFocusedIndex {
+			if ui.settingsEditMode {
+				input.SetBorderColor(tcell.ColorGreen)
+			} else {
+				input.SetBorderColor(tcell.ColorBlue)
+			}
+		} else {
+			input.SetBorderColor(tcell.ColorGray)
+		}
+	}
+
+	// Checkbox styling
+	if ui.settingsFocusedIndex == 7 {
+		ui.settingAurCb.SetFieldBackgroundColor(tcell.ColorYellow)
+		ui.settingAurCb.SetFieldTextColor(tcell.ColorBlack)
+	} else {
+		ui.settingAurCb.SetFieldBackgroundColor(tcell.ColorDefault)
+		ui.settingAurCb.SetFieldTextColor(tcell.ColorWhite)
+	}
+
+	// Save button styling
+	if ui.settingsFocusedIndex == 8 {
+		ui.btnSave.SetTextColor(tcell.ColorDefault)
+		ui.btnSave.SetBackgroundColor(tcell.ColorBlue)
+		ui.btnSave.SetText("Apply & Save")
+	} else {
+		ui.btnSave.SetTextColor(tcell.ColorWhite)
+		ui.btnSave.SetBackgroundColor(tcell.ColorGray)
+		ui.btnSave.SetText("Apply & Save")
+	}
+
+	// Defaults button styling
+	if ui.settingsFocusedIndex == 9 {
+		ui.btnDefaults.SetTextColor(tcell.ColorDefault)
+		ui.btnDefaults.SetBackgroundColor(tcell.ColorBlue)
+		ui.btnDefaults.SetText("Defaults")
+	} else {
+		ui.btnDefaults.SetTextColor(tcell.ColorWhite)
+		ui.btnDefaults.SetBackgroundColor(tcell.ColorGray)
+		ui.btnDefaults.SetText("Defaults")
+	}
+}
+
+func (ui *UI) handleSettingsSelect() {
+	if ui.settingsFocusedIndex >= 0 && ui.settingsFocusedIndex < 7 {
+		ui.settingsEditMode = true
+		ui.updateSettingsDisplay()
+		ui.app.SetFocus(ui.settingInputs[ui.settingsFocusedIndex])
+	} else if ui.settingsFocusedIndex == 7 {
+		ui.settingAurCb.SetChecked(!ui.settingAurCb.IsChecked())
+		ui.updateSettingsDisplay()
+	} else if ui.settingsFocusedIndex == 8 {
+		ui.saveSettingsAction()
+	} else if ui.settingsFocusedIndex == 9 {
+		ui.loadSettingsDefaults()
+	}
+}
+
+func (ui *UI) saveSettingsAction() {
+	ui.conf.PackagesPath = ui.settingInputs[0].GetText()
+	ui.conf.PacmanDBPath = ui.settingInputs[1].GetText()
+	ui.conf.PacmanConfigPath = ui.settingInputs[2].GetText()
+	ui.conf.InstallCommand = ui.settingInputs[3].GetText()
+	ui.conf.UninstallCommand = ui.settingInputs[4].GetText()
+	ui.conf.SysUpgradeCmd = ui.settingInputs[5].GetText()
+
+	maxRes, err := strconv.Atoi(ui.settingInputs[6].GetText())
+	if err == nil {
+		ui.conf.MaxResults = maxRes
+	}
+
+	ui.conf.DisableAur = ui.settingAurCb.IsChecked()
+
+	if err := ui.conf.Save(); err != nil {
+		ui.setStatus("Error saving settings: " + err.Error())
+	} else {
+		ui.setStatus("Settings saved successfully!")
+	}
+	_ = ui.reinitPacmanDbs()
+}
+
+func (ui *UI) loadSettingsDefaults() {
+	ui.conf = config.Defaults()
+	ui.settingInputs[0].SetText(ui.conf.PackagesPath)
+	ui.settingInputs[1].SetText(ui.conf.PacmanDBPath)
+	ui.settingInputs[2].SetText(ui.conf.PacmanConfigPath)
+	ui.settingInputs[3].SetText(ui.conf.InstallCommand)
+	ui.settingInputs[4].SetText(ui.conf.UninstallCommand)
+	ui.settingInputs[5].SetText(ui.conf.SysUpgradeCmd)
+	ui.settingInputs[6].SetText(strconv.Itoa(ui.conf.MaxResults))
+	ui.settingAurCb.SetChecked(ui.conf.DisableAur)
+	ui.setStatus("Settings reset to defaults!")
 }

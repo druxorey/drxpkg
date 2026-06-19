@@ -36,6 +36,8 @@ func main() {
 	if err != nil {
 		fmt.Printf("Initialization error: %v\n", err)
 		os.Exit(1)
+	} else {
+		fmt.Print("\033[H\033[2J")
 	}
 
 	if err := appUI.Start(); err != nil {

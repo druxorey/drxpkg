@@ -194,7 +194,7 @@ func AddLocalSatisfiers(h *alpm.Handle, pkgs ...InfoRecord) {
 		return
 	}
 
-	for i := 0; i < len(pkgs); i++ {
+	for i := range len(pkgs) {
 		depList := []struct {
 			deptype string
 			deps    []string

@@ -1,3 +1,4 @@
+// Package util does something
 package util
 
 import (

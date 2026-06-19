@@ -11,19 +11,19 @@ import (
 	"time"
 )
 
-const DefaultAurRpcUrl = "https://aur.archlinux.org/rpc"
+const DefaultAurRPCURL = "https://aur.archlinux.org/rpc"
 
-func SearchAur(ctx context.Context, aurUrl, term string, timeoutMs int, maxResults int) ([]Package, error) {
+func SearchAur(ctx context.Context, aurURL, term string, timeoutMs int, maxResults int) ([]Package, error) {
 	packages := []Package{}
-	if aurUrl == "" {
-		aurUrl = DefaultAurRpcUrl
+	if aurURL == "" {
+		aurURL = DefaultAurRPCURL
 	}
 
 	client := http.Client{
 		Timeout: time.Duration(timeoutMs) * time.Millisecond,
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", aurUrl+"?v=5&type=search&by=name&arg="+url.QueryEscape(term), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", aurURL+"?v=5&type=search&by=name&arg="+url.QueryEscape(term), nil)
 	if err != nil {
 		return packages, err
 	}
@@ -66,7 +66,7 @@ func SearchAur(ctx context.Context, aurUrl, term string, timeoutMs int, maxResul
 
 func InfoAur(aurURL string, timeoutMs int, pkgs ...string) SearchResults {
 	if aurURL == "" {
-		aurURL = DefaultAurRpcUrl
+		aurURL = DefaultAurRPCURL
 	}
 
 	client := http.Client{

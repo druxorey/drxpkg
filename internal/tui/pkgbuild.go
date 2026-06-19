@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	UrlAurPkgbuild  = "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=%s"
-	UrlRepoPkgbuild = "https://gitlab.archlinux.org/archlinux/packaging/packages/%s/-/raw/main/PKGBUILD"
+	URLAurPkgbuild  = "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=%s"
+	URLRepoPkgbuild = "https://gitlab.archlinux.org/archlinux/packaging/packages/%s/-/raw/main/PKGBUILD"
 )
 
 type RegexReplace struct {
@@ -25,14 +25,14 @@ var gitlabRepl = []RegexReplace{
 	{repl: `unix-tree`, match: regexp.MustCompile(`^tree$`)},
 }
 
-func GetPkgbuildUrl(source, base string) string {
+func GetPkgbuildURL(source, base string) string {
 	if source != "AUR" {
-		return fmt.Sprintf(UrlRepoPkgbuild, encodePackageGitlabUrl(base))
+		return fmt.Sprintf(URLRepoPkgbuild, encodePackageGitlabURL(base))
 	}
-	return fmt.Sprintf(UrlAurPkgbuild, base)
+	return fmt.Sprintf(URLAurPkgbuild, base)
 }
 
-func encodePackageGitlabUrl(pkgname string) string {
+func encodePackageGitlabURL(pkgname string) string {
 	for _, regex := range gitlabRepl {
 		pkgname = regex.match.ReplaceAllString(pkgname, regex.repl)
 	}

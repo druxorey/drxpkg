@@ -1,3 +1,4 @@
+// Package pkglist does something
 package pkglist
 
 import (
@@ -35,6 +36,20 @@ func GetFilePath(customPath string) (string, error) {
 		}
 		customPath = homeDir
 	}
+
+	if strings.HasPrefix(customPath, "~/") {
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			customPath = filepath.Join(homeDir, customPath[2:])
+		}
+	} else if customPath == "~" {
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			customPath = homeDir
+		}
+	}
+	customPath = os.ExpandEnv(customPath)
+
 	return filepath.Join(customPath, PackagesFileName), nil
 }
 

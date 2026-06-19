@@ -20,7 +20,7 @@ func TestGetPkgbuildUrl(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		url := GetPkgbuildUrl(test.source, test.base)
+		url := GetPkgbuildURL(test.source, test.base)
 		if url != test.expected {
 			t.Errorf("GetPkgbuildUrl(%q, %q) = %q; expected %q", test.source, test.base, url, test.expected)
 		}
@@ -39,7 +39,7 @@ func TestGitlabUrlEncoding(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		res := encodePackageGitlabUrl(test.input)
+		res := encodePackageGitlabURL(test.input)
 		if res != test.expected {
 			t.Errorf("encodePackageGitlabUrl(%q) = %q; expected %q", test.input, res, test.expected)
 		}
