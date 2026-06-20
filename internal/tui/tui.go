@@ -330,6 +330,18 @@ func (ui *UI) setupKeyboard() {
 			}
 			return nil
 		}
+		if event.Key() == tcell.KeyRune && (event.Rune() == 'u' || event.Rune() == 'U') {
+			if ui.selectedPkg != nil {
+				ui.promptUninstall(ui.selectedPkg.Name)
+			}
+			return nil
+		}
+		if event.Key() == tcell.KeyRune && (event.Rune() == 'i' || event.Rune() == 'I') {
+			if ui.selectedPkg != nil {
+				ui.promptInstall(ui.selectedPkg.Name)
+			}
+			return nil
+		}
 		return event
 	})
 }
@@ -802,7 +814,6 @@ func (ui *UI) installOrUninstallPackage(pkg Package) {
 
 		err := cmd.Run()
 		if err == nil {
-			// Success! Auto-track in pkglist
 			if isInstall {
 				_ = pkglist.AddPackage(ui.conf.PackagesPath, pkg.Name)
 				fmt.Printf("\033[1;32m[SUCCESS]\033[0m Package '%s' installed and added to drxboot.packages.\n", pkg.Name)
@@ -821,6 +832,92 @@ func (ui *UI) installOrUninstallPackage(pkg Package) {
 	_ = ui.reinitPacmanDbs()
 	if ui.lastSearchTerm != "" {
 		ui.forceSearch(ui.lastSearchTerm)
+	}
+}
+
+func (ui *UI) showConfirmation(message string, onConfirm func()) {
+	prevFocus := ui.app.GetFocus()
+	modal := tview.NewModal().
+		SetText(message).
+		AddButtons([]string{"Yes", "No"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			ui.pages.RemovePage("confirmation")
+			ui.app.SetFocus(prevFocus)
+			if buttonLabel == "Yes" {
+				onConfirm()
+			}
+		})
+	modal.SetBackgroundColor(tcell.ColorBlack)
+	modal.SetTextColor(tcell.ColorDefault)
+	modal.SetButtonBackgroundColor(tcell.ColorBlue)
+	modal.SetButtonTextColor(tcell.ColorWhite)
+	ui.pages.AddPage("confirmation", modal, true, true)
+}
+
+func (ui *UI) promptInstall(pkgName string) {
+	ui.showConfirmation(fmt.Sprintf("Are you sure you want to install package '%s'?", pkgName), func() {
+		ui.performInstallOrUninstall(pkgName, true)
+	})
+}
+
+func (ui *UI) promptUninstall(pkgName string) {
+	ui.showConfirmation(fmt.Sprintf("Are you sure you want to uninstall package '%s'?", pkgName), func() {
+		ui.performInstallOrUninstall(pkgName, false)
+	})
+}
+
+func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
+	cmdStr := ui.conf.InstallCommand
+	if !isInstall {
+		cmdStr = ui.conf.UninstallCommand
+	}
+
+	ui.app.Suspend(func() {
+		fmt.Print("\033[H\033[2J")
+
+		var fullCommand string
+		if strings.Contains(cmdStr, "{pkg}") {
+			fullCommand = strings.ReplaceAll(cmdStr, "{pkg}", pkgName)
+		} else {
+			fullCommand = cmdStr + " " + pkgName
+		}
+
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "/bin/sh"
+		}
+
+		fmt.Printf("Running: %s\n\n", fullCommand)
+		cmd := exec.Command(shell, "-c", fullCommand)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		err := cmd.Run()
+		if err == nil {
+			if isInstall {
+				_ = pkglist.AddPackage(ui.conf.PackagesPath, pkgName)
+				fmt.Printf("\033[1;32m[SUCCESS]\033[0m Package '%s' installed and added to drxboot.packages.\n", pkgName)
+			} else {
+				_ = pkglist.RemovePackage(ui.conf.PackagesPath, pkgName)
+				fmt.Printf("\033[1;32m[SUCCESS]\033[0m Package '%s' uninstalled and removed from drxboot.packages.\n", pkgName)
+			}
+			fmt.Println("\nPress ENTER to return to drxpkg...")
+			_, _ = os.Stdin.Read(make([]byte, 1))
+		} else {
+			fmt.Printf("\033[1;31m[ERROR]\033[0m Command failed: %v\nPress ENTER to return to drxpkg...", err)
+			_, _ = os.Stdin.Read(make([]byte, 1))
+		}
+	})
+
+	_ = ui.reinitPacmanDbs()
+	if ui.activeTab == 0 {
+		if ui.lastSearchTerm != "" {
+			ui.forceSearch(ui.lastSearchTerm)
+		}
+	} else if ui.activeTab == 1 {
+		ui.updatePackages = nil
+		ui.checkForUpdates()
 	}
 }
 

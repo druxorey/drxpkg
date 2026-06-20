@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"slices"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -21,6 +22,8 @@ type UpdatePackage struct {
 	NewVersion   string
 	Source       string
 	Selected     bool
+	NotInAur     bool
+	OutOfDate    bool
 }
 
 func (ui *UI) setupUpdatePage() {
@@ -80,7 +83,13 @@ func (ui *UI) setupUpdatePage() {
 		}
 		if event.Key() == tcell.KeyRune && (event.Rune() == 'u' || event.Rune() == 'U') {
 			if row > 0 && row <= len(ui.updatePackages) {
-				ui.runSingleUpgrade(ui.updatePackages[row-1])
+				ui.promptUninstall(ui.updatePackages[row-1].Name)
+			}
+			return nil
+		}
+		if event.Key() == tcell.KeyRune && (event.Rune() == 'i' || event.Rune() == 'I') {
+			if row > 0 && row <= len(ui.updatePackages) {
+				ui.promptInstall(ui.updatePackages[row-1].Name)
 			}
 			return nil
 		}
@@ -108,6 +117,9 @@ func (ui *UI) togglePackageSelection(index int) {
 	if index < 0 || index >= len(ui.updatePackages) {
 		return
 	}
+	if ui.updatePackages[index].NotInAur {
+		return
+	}
 	ui.updatePackages[index].Selected = !ui.updatePackages[index].Selected
 	ui.renderUpdateTable()
 }
@@ -115,12 +127,18 @@ func (ui *UI) togglePackageSelection(index int) {
 func (ui *UI) toggleSelectAll() {
 	allSelected := true
 	for _, p := range ui.updatePackages {
+		if p.NotInAur {
+			continue
+		}
 		if !p.Selected {
 			allSelected = false
 			break
 		}
 	}
 	for i := range ui.updatePackages {
+		if ui.updatePackages[i].NotInAur {
+			continue
+		}
 		ui.updatePackages[i].Selected = !allSelected
 	}
 	ui.renderUpdateTable()
@@ -152,21 +170,37 @@ func (ui *UI) renderUpdateTable() {
 		arrowCell := tview.NewTableCell("->").SetTextColor(tcell.ColorGray).SetMaxWidth(4)
 		newCell := tview.NewTableCell(p.NewVersion).SetMaxWidth(20)
 
-		if p.Selected {
-			pkgCell.SetTextColor(tcell.ColorDefault)
-			currCell.SetTextColor(tcell.ColorDefault)
-			newCell.SetTextColor(tcell.ColorGreen)
-		} else {
+		sourceColor := getSourceColor(p.Source)
+		sourceCell := tview.NewTableCell(p.Source).SetTextColor(sourceColor).SetMaxWidth(12)
+
+		if p.NotInAur {
 			pkgCell.SetTextColor(tcell.ColorGray)
 			currCell.SetTextColor(tcell.ColorGray)
+			arrowCell.SetTextColor(tcell.ColorGray)
 			newCell.SetTextColor(tcell.ColorGray)
+			sourceCell.SetTextColor(tcell.ColorGray)
+			sourceCell.SetText("Not in AUR")
+			selCell.SetText("   ")
+		} else if p.OutOfDate {
+			pkgCell.SetTextColor(tcell.ColorRed)
+			currCell.SetTextColor(tcell.ColorRed)
+			arrowCell.SetTextColor(tcell.ColorRed)
+			newCell.SetTextColor(tcell.ColorRed)
+			sourceCell.SetTextColor(tcell.ColorRed)
+		} else {
+			if p.Selected {
+				pkgCell.SetTextColor(tcell.ColorDefault)
+				currCell.SetTextColor(tcell.ColorDefault)
+				newCell.SetTextColor(tcell.ColorGreen)
+			} else {
+				pkgCell.SetTextColor(tcell.ColorGray)
+				currCell.SetTextColor(tcell.ColorGray)
+				newCell.SetTextColor(tcell.ColorGray)
+			}
+			if !p.Selected {
+				sourceCell.SetTextColor(tcell.ColorGray)
+			}
 		}
-
-		sourceColor := getSourceColor(p.Source)
-		if !p.Selected {
-			sourceColor = tcell.ColorGray
-		}
-		sourceCell := tview.NewTableCell(p.Source).SetTextColor(sourceColor).SetMaxWidth(12)
 
 		ui.updateTable.SetCell(idx+1, 0, selCell)
 		ui.updateTable.SetCell(idx+1, 1, pkgCell)
@@ -209,6 +243,23 @@ func ParseUpdateLine(line string) (*UpdatePackage, error) {
 	}, nil
 }
 
+func (ui *UI) countUpdatesInfo(pkgs []UpdatePackage) (totalUpdates, aurUpdates, outOfDate, notInAur int) {
+	for _, p := range pkgs {
+		if p.NotInAur {
+			notInAur++
+		} else {
+			totalUpdates++
+			if p.Source == "AUR" {
+				aurUpdates++
+			}
+			if p.OutOfDate {
+				outOfDate++
+			}
+		}
+	}
+	return
+}
+
 func (ui *UI) checkForUpdates() {
 	if ui.updatePackages != nil {
 		ui.renderUpdateTable()
@@ -216,7 +267,20 @@ func (ui *UI) checkForUpdates() {
 			ui.setStatus("System is up to date.")
 			ui.updateDetails.SetText("All packages are up to date!")
 		} else {
-			ui.setStatus(fmt.Sprintf("Found %d updates (%d AUR).", len(ui.updatePackages), countAur(ui.updatePackages)))
+			up, aur, ood, nia := ui.countUpdatesInfo(ui.updatePackages)
+			var statusParts []string
+			if up > 0 {
+				statusParts = append(statusParts, fmt.Sprintf("%d updates (%d AUR)", up, aur))
+			} else {
+				statusParts = append(statusParts, "System is up to date")
+			}
+			if ood > 0 {
+				statusParts = append(statusParts, fmt.Sprintf("%d out of date", ood))
+			}
+			if nia > 0 {
+				statusParts = append(statusParts, fmt.Sprintf("%d not in AUR", nia))
+			}
+			ui.setStatus(strings.Join(statusParts, ", ") + ".")
 		}
 		return
 	}
@@ -272,8 +336,133 @@ func (ui *UI) backgroundUpdateCheck() {
 			}
 		}
 
-		// Sort: AUR packages first, then alphabetical by name
+		// 3. Get all foreign packages (installed packages not in any sync database)
+		var foreignPkgs []string
+		ui.alpmMutex.Lock()
+		if ui.alpmHandle != nil {
+			localDb, err := ui.alpmHandle.LocalDB()
+			syncDbs, errSync := ui.alpmHandle.SyncDBs()
+			if err == nil && errSync == nil {
+				for _, pkg := range localDb.PkgCache().Slice() {
+					name := pkg.Name()
+					// Ignore debug packages
+					if strings.HasSuffix(name, "-debug") {
+						continue
+					}
+					found := false
+					for _, db := range syncDbs.Slice() {
+						if db.Pkg(name) != nil {
+							found = true
+							break
+						}
+					}
+					if !found {
+						foreignPkgs = append(foreignPkgs, name)
+					}
+				}
+			}
+		}
+		ui.alpmMutex.Unlock()
+
+		// Query AUR RPC in chunks of 100 to classify NotInAur and OutOfDate
+		var aurResults []InfoRecord
+		const chunkSize = 100
+		for i := 0; i < len(foreignPkgs); i += chunkSize {
+			end := i + chunkSize
+			if end > len(foreignPkgs) {
+				end = len(foreignPkgs)
+			}
+			chunk := foreignPkgs[i:end]
+			info := InfoAur("", 5000, chunk...)
+			aurResults = append(aurResults, info.Results...)
+		}
+
+		aurFound := make(map[string]InfoRecord)
+		for _, r := range aurResults {
+			aurFound[r.Name] = r
+		}
+
+		var notInAurPkgs []string
+		var outOfDatePkgs []string
+		for _, name := range foreignPkgs {
+			info, found := aurFound[name]
+			if !found {
+				notInAurPkgs = append(notInAurPkgs, name)
+			} else if info.OutOfDate > 0 {
+				outOfDatePkgs = append(outOfDatePkgs, name)
+			}
+		}
+
+		getLocalVersion := func(name string) string {
+			ui.alpmMutex.Lock()
+			defer ui.alpmMutex.Unlock()
+			if ui.alpmHandle == nil {
+				return ""
+			}
+			localDb, err := ui.alpmHandle.LocalDB()
+			if err != nil {
+				return ""
+			}
+			pkg := localDb.Pkg(name)
+			if pkg != nil {
+				return pkg.Version()
+			}
+			return ""
+		}
+
+		for _, name := range notInAurPkgs {
+			exists := false
+			for _, p := range pkgs {
+				if p.Name == name {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				pkgs = append(pkgs, UpdatePackage{
+					Name:         name,
+					LocalVersion: getLocalVersion(name),
+					NewVersion:   "-",
+					Source:       "AUR",
+					Selected:     false,
+					NotInAur:     true,
+				})
+			}
+		}
+
+		for _, name := range outOfDatePkgs {
+			foundIdx := -1
+			for idx := range pkgs {
+				if pkgs[idx].Name == name {
+					foundIdx = idx
+					break
+				}
+			}
+			if foundIdx != -1 {
+				pkgs[foundIdx].OutOfDate = true
+			} else {
+				pkgs = append(pkgs, UpdatePackage{
+					Name:         name,
+					LocalVersion: getLocalVersion(name),
+					NewVersion:   "-",
+					Source:       "AUR",
+					Selected:     false,
+					OutOfDate:    true,
+				})
+			}
+		}
+
+		// Sort:
+		// 1. OutOfDate at the top
+		// 2. Normal updates (repo/AUR)
+		// 3. NotInAur at the bottom
 		sort.Slice(pkgs, func(i, j int) bool {
+			if pkgs[i].OutOfDate != pkgs[j].OutOfDate {
+				return pkgs[i].OutOfDate
+			}
+			if pkgs[i].NotInAur != pkgs[j].NotInAur {
+				return !pkgs[i].NotInAur
+			}
 			aAur := pkgs[i].Source == "AUR"
 			bAur := pkgs[j].Source == "AUR"
 			if aAur != bAur {
@@ -293,7 +482,20 @@ func (ui *UI) backgroundUpdateCheck() {
 					ui.updateDetails.SetText("All packages are up to date!")
 				}
 			} else {
-				ui.setStatus(fmt.Sprintf("Found %d updates (%d AUR).", len(pkgs), countAur(pkgs)))
+				up, aur, ood, nia := ui.countUpdatesInfo(pkgs)
+				var statusParts []string
+				if up > 0 {
+					statusParts = append(statusParts, fmt.Sprintf("%d updates (%d AUR)", up, aur))
+				} else {
+					statusParts = append(statusParts, "System is up to date")
+				}
+				if ood > 0 {
+					statusParts = append(statusParts, fmt.Sprintf("%d out of date", ood))
+				}
+				if nia > 0 {
+					statusParts = append(statusParts, fmt.Sprintf("%d not in AUR", nia))
+				}
+				ui.setStatus(strings.Join(statusParts, ", ") + ".")
 				if ui.updateTable != nil && len(pkgs) > 0 {
 					ui.updateTable.Select(1, 0)
 				}
@@ -348,6 +550,28 @@ func (ui *UI) preloadUpdateDetails(pkg UpdatePackage) {
 		return
 	}
 
+	if pkg.NotInAur {
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "[blue]Package:[-] %s\n", pkg.Name)
+		fmt.Fprintf(&sb, "[blue]Local Version:[-] %s\n", pkg.LocalVersion)
+		fmt.Fprintf(&sb, "[blue]Source:[-] Not in AUR\n\n")
+		fmt.Fprintf(&sb, "[yellow]Warning:[-] Local-only package (not in AUR).\n")
+		fmt.Fprintf(&sb, "This package is installed locally but was not found in the AUR.\n")
+		fmt.Fprintf(&sb, "It will not receive updates. You can press [blue]'u'[-] to uninstall it.\n")
+
+		ui.cacheMutex.Lock()
+		ui.updateDetailsCache[pkg.Name] = sb.String()
+		ui.cacheMutex.Unlock()
+
+		ui.app.QueueUpdateDraw(func() {
+			if ui.selectedUpdate != nil && ui.selectedUpdate.Name == pkg.Name {
+				ui.updateDetails.SetText(sb.String())
+				ui.updateDetails.ScrollToBeginning()
+			}
+		})
+		return
+	}
+
 	var info SearchResults
 	if pkg.Source == "AUR" {
 		info = InfoAur("", 5000, pkg.Name)
@@ -387,6 +611,12 @@ func (ui *UI) preloadUpdateDetails(pkg UpdatePackage) {
 	}
 
 	var sb strings.Builder
+	if pkg.OutOfDate {
+		fmt.Fprintf(&sb, "[red]---------------------------------------------------------------[-]\n\n")
+		fmt.Fprintf(&sb, "[red]WARNING:[-] Flagged OUT OF DATE in the AUR.\n")
+		fmt.Fprintf(&sb, "It is recommended to avoid updating this package or uninstall it.\n")
+		fmt.Fprintf(&sb, "[red]---------------------------------------------------------------[-]\n\n")
+	}
 	if len(info.Results) > 0 {
 		record := info.Results[0]
 		fields := []struct {
@@ -545,7 +775,8 @@ func (ui *UI) runUpgradeProcess() {
 		parts := strings.Fields(cmdStr)
 		binary := parts[0]
 
-		if binary == "yay" {
+		switch binary {
+		case "yay":
 			if len(parts) == 1 {
 				args = append(args, "-Syu", "--noconfirm")
 			} else {
@@ -554,12 +785,12 @@ func (ui *UI) runUpgradeProcess() {
 					args = append(args, "--noconfirm")
 				}
 			}
-		} else if binary == "pacman" {
+		case "pacman":
 			args = append(args, parts[1:]...)
 			if !hasFlag(args, "--noconfirm") {
 				args = append(args, "--noconfirm")
 			}
-		} else {
+		default:
 			if len(parts) > 1 {
 				args = append(args, parts[1:]...)
 			}
@@ -601,91 +832,8 @@ func (ui *UI) runUpgradeProcess() {
 	ui.checkForUpdates()
 }
 
-func (ui *UI) runSingleUpgrade(pkg UpdatePackage) {
-	cmdStr := ui.conf.InstallCommand
-	if cmdStr == "" {
-		cmdStr = "yay -S"
-	}
-
-	ui.app.Suspend(func() {
-		fmt.Print("\033[H\033[2J")
-
-		var fullCommand string
-		if strings.Contains(cmdStr, "{pkg}") {
-			fullCommand = strings.ReplaceAll(cmdStr, "{pkg}", pkg.Name)
-		} else {
-			fullCommand = cmdStr + " " + pkg.Name
-		}
-
-		parts := strings.Fields(fullCommand)
-		binary := parts[0]
-		args := parts[1:]
-		if !hasFlag(args, "--noconfirm") {
-			args = append(args, "--noconfirm")
-		}
-
-		var upgradeCmd *exec.Cmd
-		if binary == "pacman" {
-			upgradeCmd = exec.Command("sudo", append([]string{binary}, args...)...)
-			fmt.Printf("Running single upgrade: sudo %s %s\n\n", binary, strings.Join(args, " "))
-		} else {
-			upgradeCmd = exec.Command(binary, args...)
-			fmt.Printf("Running single upgrade: %s %s\n\n", binary, strings.Join(args, " "))
-		}
-
-		upgradeCmd.Stdin = os.Stdin
-		upgradeCmd.Stdout = os.Stdout
-		upgradeCmd.Stderr = os.Stderr
-
-		err := upgradeCmd.Run()
-		if err != nil {
-			fmt.Printf("\n\033[1;31m[ERROR]\033[0m Upgrade failed for '%s': %v\n", pkg.Name, err)
-		} else {
-			fmt.Printf("\n\033[1;32m[SUCCESS]\033[0m Package '%s' upgraded successfully.\n", pkg.Name)
-		}
-
-		fmt.Println("\nPress ENTER to return to drxpkg...")
-		_, _ = os.Stdin.Read(make([]byte, 1))
-	})
-
-	_ = ui.reinitPacmanDbs()
-	ui.updatePackages = nil
-	ui.checkForUpdates()
-}
 
 func (ui *UI) runExtraUpdates() {
-	home, err := os.UserHomeDir()
-	if err == nil {
-		vencordPaths := []string{
-			filepath.Join(home, ".config/Vencord"),
-			filepath.Join(home, ".config/vencord"),
-			filepath.Join(home, ".local/share/Vencord"),
-			filepath.Join(home, ".local/share/vencord"),
-		}
-		vencordInstalled := false
-		for _, p := range vencordPaths {
-			if _, err := os.Stat(p); err == nil {
-				vencordInstalled = true
-				break
-			}
-		}
-
-		if vencordInstalled {
-			fmt.Printf("\n ➤ \033[1;34mUpdating Discord hooks/Vencord...\033[0m\n")
-			cmd := exec.Command("sh", "-c", "curl -sS https://raw.githubusercontent.com/Vendicated/VencordInstaller/main/install.sh | sh")
-			cmd.Stdin = os.Stdin
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				fmt.Printf("\033[1;31m[ERROR]\033[0m Failed to update Vencord: %v\n", err)
-			} else {
-				fmt.Printf("\033[1;32m[SUCCESS]\033[0m Vencord updated.\n")
-			}
-		} else {
-			fmt.Printf("\nNo Vencord installation detected. Skipping Vencord update.\n")
-		}
-	}
-
 	if _, err := exec.LookPath("ya"); err == nil {
 		fmt.Printf("\n ➤ \033[1;34mUpdating Yazi plugins...\033[0m\n")
 		cmd := exec.Command("ya", "pkg", "upgrade")
@@ -700,180 +848,9 @@ func (ui *UI) runExtraUpdates() {
 	} else {
 		fmt.Printf("\n'ya' tool not found. Skipping Yazi plugins update.\n")
 	}
-
-	fmt.Printf("\n ➤ \033[1;34mUpdating drxutils...\033[0m\n")
-	if err := ui.updateDrxutils(); err != nil {
-		fmt.Printf("\033[1;31m[ERROR]\033[0m Failed to update drxutils: %v\n", err)
-	} else {
-		fmt.Printf("\033[1;32m[SUCCESS]\033[0m drxutils updated successfully.\n")
-	}
 }
 
-func (ui *UI) updateDrxutils() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	repositoryURL := "https://github.com/druxorey/drxutils.git"
-	srcDirectory := filepath.Join(home, ".cache/drxutils_src")
-	binDirectory := filepath.Join(home, ".local/bin")
-
-	if err := os.MkdirAll(binDirectory, 0755); err != nil {
-		return fmt.Errorf("failed to create bin directory: %w", err)
-	}
-
-	var changedFiles []string
-	var deletedFiles []string
-
-	if _, err := os.Stat(srcDirectory); os.IsNotExist(err) {
-		fmt.Println("Cloning drxutils repository...")
-		cmd := exec.Command("git", "clone", repositoryURL, srcDirectory, "--quiet")
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("git clone failed: %w", err)
-		}
-
-		cmdList := exec.Command("git", "ls-files")
-		cmdList.Dir = srcDirectory
-		out, err := cmdList.Output()
-		if err != nil {
-			return fmt.Errorf("failed to list git files: %w", err)
-		}
-		changedFiles = splitLines(string(out))
-	} else {
-		fmt.Println("Fetching drxutils updates...")
-		cmdFetch := exec.Command("git", "fetch", "origin", "--quiet")
-		cmdFetch.Dir = srcDirectory
-		if err := cmdFetch.Run(); err != nil {
-			return fmt.Errorf("git fetch failed: %w", err)
-		}
-
-		cmdBranch := exec.Command("git", "branch", "--show-current")
-		cmdBranch.Dir = srcDirectory
-		branchOut, err := cmdBranch.Output()
-		if err != nil {
-			return fmt.Errorf("failed to get current branch: %w", err)
-		}
-		branch := strings.TrimSpace(string(branchOut))
-		if branch == "" {
-			branch = "main"
-		}
-
-		cmdDel := exec.Command("git", "diff", "--name-only", "--diff-filter=D", "HEAD", "origin/"+branch)
-		cmdDel.Dir = srcDirectory
-		delOut, _ := cmdDel.Output()
-		deletedFiles = splitLines(string(delOut))
-
-		cmdChg := exec.Command("git", "diff", "--name-only", "--diff-filter=AM", "HEAD", "origin/"+branch)
-		cmdChg.Dir = srcDirectory
-		chgOut, _ := cmdChg.Output()
-		changedFiles = splitLines(string(chgOut))
-
-		cmdReset := exec.Command("git", "reset", "--hard", "origin/"+branch, "--quiet")
-		cmdReset.Dir = srcDirectory
-		if err := cmdReset.Run(); err != nil {
-			return fmt.Errorf("git reset failed: %w", err)
-		}
-	}
-
-	for _, file := range deletedFiles {
-		if strings.HasPrefix(file, "bash/") {
-			scriptName := strings.TrimPrefix(file, "bash/")
-			scriptPath := filepath.Join(binDirectory, scriptName)
-			_ = os.Remove(scriptPath)
-			fmt.Printf("Bash script removed locally: %s\n", scriptName)
-		} else if strings.Contains(file, "/") {
-			parts := strings.Split(file, "/")
-			dirName := parts[0]
-			projectPath := filepath.Join(binDirectory, dirName)
-			_ = os.Remove(projectPath)
-			fmt.Printf("Go project removed locally: %s\n", dirName)
-		}
-	}
-
-	bashDir := filepath.Join(srcDirectory, "bash")
-	if entries, err := os.ReadDir(bashDir); err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				srcFile := filepath.Join(bashDir, entry.Name())
-				dstFile := filepath.Join(binDirectory, entry.Name())
-				if err := copyFile(srcFile, dstFile); err == nil {
-					_ = os.Chmod(dstFile, 0755)
-				}
-			}
-		}
-		fmt.Println("All bash scripts copied to " + binDirectory)
-	}
-
-	if len(changedFiles) > 0 {
-		goDirsToCompile := make(map[string]bool)
-		for _, file := range changedFiles {
-			if strings.Contains(file, "/") {
-				parts := strings.Split(file, "/")
-				dirName := parts[0]
-				if dirName != "bash" {
-					goModPath := filepath.Join(srcDirectory, dirName, "go.mod")
-					if _, err := os.Stat(goModPath); err == nil {
-						goDirsToCompile[dirName] = true
-					}
-				}
-			}
-		}
-
-		for dirName := range goDirsToCompile {
-			fmt.Printf("Compiling Go project: %s...\n", dirName)
-			projectDir := filepath.Join(srcDirectory, dirName)
-			outBin := filepath.Join(binDirectory, dirName)
-			cmdBuild := exec.Command("go", "build", "-o", outBin)
-			cmdBuild.Dir = projectDir
-			cmdBuild.Stdout = os.Stdout
-			cmdBuild.Stderr = os.Stderr
-			if err := cmdBuild.Run(); err != nil {
-				fmt.Printf("[ERROR] Compiling failed for: %s: %v\n", dirName, err)
-			} else {
-				fmt.Printf("[SUCCESS] Installed: %s\n", dirName)
-			}
-		}
-	} else {
-		fmt.Println("Go projects are up to date.")
-	}
-
-	return nil
-}
 
 func hasFlag(args []string, flag string) bool {
-	for _, a := range args {
-		if a == flag {
-			return true
-		}
-	}
-	return false
-}
-
-func splitLines(s string) []string {
-	var lines []string
-	for _, l := range strings.Split(s, "\n") {
-		l = strings.TrimSpace(l)
-		if l != "" {
-			lines = append(lines, l)
-		}
-	}
-	return lines
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
+	return slices.Contains(args, flag)
 }
