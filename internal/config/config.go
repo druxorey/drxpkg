@@ -16,6 +16,7 @@ type Settings struct {
 	SysUpgradeCmd    string `json:"sys_upgrade_cmd"`
 	MaxResults       int    `json:"max_results"`
 	DisableAur       bool   `json:"disable_aur"`
+	RunUpdateHooks   bool   `json:"run_update_hooks"`
 }
 
 func Defaults() *Settings {
@@ -28,6 +29,7 @@ func Defaults() *Settings {
 		SysUpgradeCmd:    "yay",
 		MaxResults:       300,
 		DisableAur:       false,
+		RunUpdateHooks:   true,
 	}
 }
 
@@ -65,6 +67,10 @@ func (s *Settings) Save() error {
 		return err
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	hooksDir := filepath.Join(dir, "update_hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(s, "", "  ")

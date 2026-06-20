@@ -7,11 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
-	"slices"
 
+	"github.com/druxorey/drxpkg/internal/config"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -821,7 +822,7 @@ func (ui *UI) runUpgradeProcess() {
 			fmt.Printf("\n\033[1;32m[SUCCESS]\033[0m System upgrade completed successfully.\n")
 		}
 
-		ui.runExtraUpdates()
+		ui.runUpdateHooks()
 
 		fmt.Println("\nPress ENTER to return to drxpkg...")
 		_, _ = os.Stdin.Read(make([]byte, 1))
@@ -833,20 +834,60 @@ func (ui *UI) runUpgradeProcess() {
 }
 
 
-func (ui *UI) runExtraUpdates() {
-	if _, err := exec.LookPath("ya"); err == nil {
-		fmt.Printf("\n ➤ \033[1;34mUpdating Yazi plugins...\033[0m\n")
-		cmd := exec.Command("ya", "pkg", "upgrade")
+func (ui *UI) runUpdateHooks() {
+	if !ui.conf.RunUpdateHooks {
+		fmt.Printf("\nUpdate hooks are disabled in settings.\n")
+		return
+	}
+
+	configDir, err := config.GetConfigDir()
+	if err != nil {
+		fmt.Printf("\n\033[1;31m[ERROR]\033[0m Failed to get config directory: %v\n", err)
+		return
+	}
+
+	hooksDir := filepath.Join(configDir, "update_hooks")
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		fmt.Printf("\n\033[1;31m[ERROR]\033[0m Failed to create update hooks directory: %v\n", err)
+		return
+	}
+
+	files, err := os.ReadDir(hooksDir)
+	if err != nil {
+		fmt.Printf("\n\033[1;31m[ERROR]\033[0m Failed to read update hooks directory: %v\n", err)
+		return
+	}
+
+	var hookFiles []string
+	for _, file := range files {
+		if !file.IsDir() {
+			hookFiles = append(hookFiles, file.Name())
+		}
+	}
+
+	if len(hookFiles) == 0 {
+		fmt.Printf("\nNo update hooks found in %s\n", hooksDir)
+		return
+	}
+
+	// Sort alphabetically to run sequentially
+	sort.Strings(hookFiles)
+
+	fmt.Printf("\n ➤ \033[1;34mRunning post-update hooks...\033[0m\n")
+	for _, filename := range hookFiles {
+		scriptPath := filepath.Join(hooksDir, filename)
+		fmt.Printf("\n ➤ \033[1;34mExecuting hook: %s...\033[0m\n", filename)
+
+		cmd := exec.Command("bash", scriptPath)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
+
 		if err := cmd.Run(); err != nil {
-			fmt.Printf("\033[1;31m[ERROR]\033[0m Failed to update Yazi plugins: %v\n", err)
+			fmt.Printf("\033[1;31m[ERROR]\033[0m Hook '%s' failed: %v\n", filename, err)
 		} else {
-			fmt.Printf("\033[1;32m[SUCCESS]\033[0m Yazi plugins updated.\n")
+			fmt.Printf("\033[1;32m[SUCCESS]\033[0m Hook '%s' completed.\n", filename)
 		}
-	} else {
-		fmt.Printf("\n'ya' tool not found. Skipping Yazi plugins update.\n")
 	}
 }
 

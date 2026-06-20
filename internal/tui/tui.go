@@ -41,6 +41,7 @@ type UI struct {
 	settingsGrid         *tview.Grid
 	settingInputs        []*tview.InputField
 	settingAurCb         *tview.Checkbox
+	settingHooksCb       *tview.Checkbox
 	btnSave              *tview.TextView
 	btnDefaults          *tview.TextView
 	settingsFocusedIndex int
@@ -962,10 +963,16 @@ func (ui *UI) setupSettingsPanel() {
 		})
 	}
 
-	// Initialize checkbox
+	// Initialize checkboxes
 	ui.settingAurCb = tview.NewCheckbox().SetLabel("").SetChecked(ui.conf.DisableAur)
 	ui.settingAurCb.SetFocusFunc(func() {
 		ui.settingsFocusedIndex = 7
+		ui.updateSettingsDisplay()
+	})
+
+	ui.settingHooksCb = tview.NewCheckbox().SetLabel("").SetChecked(ui.conf.RunUpdateHooks)
+	ui.settingHooksCb.SetFocusFunc(func() {
+		ui.settingsFocusedIndex = 8
 		ui.updateSettingsDisplay()
 	})
 
@@ -980,9 +987,9 @@ func (ui *UI) setupSettingsPanel() {
 		SetBorderColor(tcell.ColorBlue).
 		SetTitleColor(tcell.ColorBlue)
 
-	// Fields Grid: 7 inputs (height 3 each), 1 checkbox (height 1)
+	// Fields Grid: 7 inputs (height 3 each), 2 checkboxes (height 1 each)
 	fieldsGrid := tview.NewGrid().
-		SetRows(3, 3, 3, 3, 3, 3, 3, 3).
+		SetRows(3, 3, 3, 3, 3, 3, 3, 1, 1).
 		SetColumns(25, 0)
 
 	labels := []string{
@@ -994,6 +1001,7 @@ func (ui *UI) setupSettingsPanel() {
 		"Upgrade Command",
 		"Max Results",
 		"Disable AUR",
+		"Run Update Hooks",
 	}
 
 	for i, name := range labels {
@@ -1007,9 +1015,12 @@ func (ui *UI) setupSettingsPanel() {
 		if i < 7 {
 			fieldsGrid.AddItem(lbl, i, 0, 1, 1, 0, 0, false)
 			fieldsGrid.AddItem(ui.settingInputs[i], i, 1, 1, 1, 0, 0, false)
-		} else {
+		} else if i == 7 {
 			fieldsGrid.AddItem(lbl, i, 0, 1, 1, 0, 0, false)
 			fieldsGrid.AddItem(ui.settingAurCb, i, 1, 1, 1, 0, 0, false)
+		} else {
+			fieldsGrid.AddItem(lbl, i, 0, 1, 1, 0, 0, false)
+			fieldsGrid.AddItem(ui.settingHooksCb, i, 1, 1, 1, 0, 0, false)
 		}
 	}
 
@@ -1029,11 +1040,11 @@ func (ui *UI) setupSettingsPanel() {
 
 	// Center the settingsBox using a grid
 	ui.settingsGrid = tview.NewGrid().
-		SetRows(0, 28, 0).
+		SetRows(0, 30, 0).
 		SetColumns(0, 75, 0).
 		AddItem(settingsBox, 1, 1, 1, 1, 0, 0, true)
 
-	// Set input capture on settingsGrid for navigation
+	// Set input capture on settingsGrid for navigation (11 indices: 0..10)
 	ui.settingsGrid.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if ui.settingsEditMode {
 			return event
@@ -1041,31 +1052,31 @@ func (ui *UI) setupSettingsPanel() {
 
 		switch event.Key() {
 		case tcell.KeyUp:
-			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 9) % 10
+			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 10) % 11
 			ui.updateSettingsDisplay()
 			return nil
 		case tcell.KeyDown:
-			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 1) % 10
+			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 1) % 11
 			ui.updateSettingsDisplay()
 			return nil
 		case tcell.KeyLeft:
-			if ui.settingsFocusedIndex == 9 {
-				ui.settingsFocusedIndex = 8
-				ui.updateSettingsDisplay()
-				return nil
-			}
-		case tcell.KeyRight:
-			if ui.settingsFocusedIndex == 8 {
+			if ui.settingsFocusedIndex == 10 {
 				ui.settingsFocusedIndex = 9
 				ui.updateSettingsDisplay()
 				return nil
 			}
+		case tcell.KeyRight:
+			if ui.settingsFocusedIndex == 9 {
+				ui.settingsFocusedIndex = 10
+				ui.updateSettingsDisplay()
+				return nil
+			}
 		case tcell.KeyTAB:
-			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 1) % 10
+			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 1) % 11
 			ui.updateSettingsDisplay()
 			return nil
 		case tcell.KeyBacktab:
-			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 9) % 10
+			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 10) % 11
 			ui.updateSettingsDisplay()
 			return nil
 		case tcell.KeyEnter:
@@ -1075,22 +1086,22 @@ func (ui *UI) setupSettingsPanel() {
 
 		switch event.Rune() {
 		case 'j', 'J':
-			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 1) % 10
+			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 1) % 11
 			ui.updateSettingsDisplay()
 			return nil
 		case 'k', 'K':
-			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 9) % 10
+			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 10) % 11
 			ui.updateSettingsDisplay()
 			return nil
 		case 'h', 'H':
-			if ui.settingsFocusedIndex == 9 {
-				ui.settingsFocusedIndex = 8
+			if ui.settingsFocusedIndex == 10 {
+				ui.settingsFocusedIndex = 9
 				ui.updateSettingsDisplay()
 				return nil
 			}
 		case 'l', 'L':
-			if ui.settingsFocusedIndex == 8 {
-				ui.settingsFocusedIndex = 9
+			if ui.settingsFocusedIndex == 9 {
+				ui.settingsFocusedIndex = 10
 				ui.updateSettingsDisplay()
 				return nil
 			}
@@ -1119,7 +1130,7 @@ func (ui *UI) updateSettingsDisplay() {
 		}
 	}
 
-	// Checkbox styling
+	// Disable AUR Checkbox styling
 	if ui.settingsFocusedIndex == 7 {
 		ui.settingAurCb.SetFieldBackgroundColor(tcell.ColorYellow)
 		ui.settingAurCb.SetFieldTextColor(tcell.ColorBlack)
@@ -1128,8 +1139,17 @@ func (ui *UI) updateSettingsDisplay() {
 		ui.settingAurCb.SetFieldTextColor(tcell.ColorWhite)
 	}
 
-	// Save button styling
+	// Run Update Hooks Checkbox styling
 	if ui.settingsFocusedIndex == 8 {
+		ui.settingHooksCb.SetFieldBackgroundColor(tcell.ColorYellow)
+		ui.settingHooksCb.SetFieldTextColor(tcell.ColorBlack)
+	} else {
+		ui.settingHooksCb.SetFieldBackgroundColor(tcell.ColorDefault)
+		ui.settingHooksCb.SetFieldTextColor(tcell.ColorWhite)
+	}
+
+	// Save button styling
+	if ui.settingsFocusedIndex == 9 {
 		ui.btnSave.SetTextColor(tcell.ColorDefault)
 		ui.btnSave.SetBackgroundColor(tcell.ColorBlue)
 		ui.btnSave.SetText("Apply & Save")
@@ -1140,7 +1160,7 @@ func (ui *UI) updateSettingsDisplay() {
 	}
 
 	// Defaults button styling
-	if ui.settingsFocusedIndex == 9 {
+	if ui.settingsFocusedIndex == 10 {
 		ui.btnDefaults.SetTextColor(tcell.ColorDefault)
 		ui.btnDefaults.SetBackgroundColor(tcell.ColorBlue)
 		ui.btnDefaults.SetText("Defaults")
@@ -1160,8 +1180,11 @@ func (ui *UI) handleSettingsSelect() {
 		ui.settingAurCb.SetChecked(!ui.settingAurCb.IsChecked())
 		ui.updateSettingsDisplay()
 	} else if ui.settingsFocusedIndex == 8 {
-		ui.saveSettingsAction()
+		ui.settingHooksCb.SetChecked(!ui.settingHooksCb.IsChecked())
+		ui.updateSettingsDisplay()
 	} else if ui.settingsFocusedIndex == 9 {
+		ui.saveSettingsAction()
+	} else if ui.settingsFocusedIndex == 10 {
 		ui.loadSettingsDefaults()
 	}
 }
@@ -1180,6 +1203,7 @@ func (ui *UI) saveSettingsAction() {
 	}
 
 	ui.conf.DisableAur = ui.settingAurCb.IsChecked()
+	ui.conf.RunUpdateHooks = ui.settingHooksCb.IsChecked()
 
 	if err := ui.conf.Save(); err != nil {
 		ui.setStatus("Error saving settings: " + err.Error())
@@ -1199,5 +1223,6 @@ func (ui *UI) loadSettingsDefaults() {
 	ui.settingInputs[5].SetText(ui.conf.SysUpgradeCmd)
 	ui.settingInputs[6].SetText(strconv.Itoa(ui.conf.MaxResults))
 	ui.settingAurCb.SetChecked(ui.conf.DisableAur)
+	ui.settingHooksCb.SetChecked(ui.conf.RunUpdateHooks)
 	ui.setStatus("Settings reset to defaults!")
 }
