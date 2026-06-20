@@ -1,3 +1,4 @@
+// Package pkglist provides functionality to read, write, and manipulate the tracked packages list file.
 package pkglist
 
 import (

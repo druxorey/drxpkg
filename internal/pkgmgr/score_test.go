@@ -1,4 +1,5 @@
-package tui
+// Package pkgmgr provides package management backend operations for AUR and local Pacman (ALPM) databases.
+package pkgmgr
 
 import (
 	"sort"
@@ -13,14 +14,14 @@ func sortPackages(pkgs []Package, term string) []Package {
 
 	for _, p := range pkgs {
 		nameLower := strings.ToLower(p.Name)
-		
+
 		// Filter out packages that don't match the query
 		// For the test, we'll assume chromium and libcamera match "chrome" via description
 		isMatch := strings.Contains(nameLower, termLower)
 		if term == "chrome" && (p.Name == "chromium" || p.Name == "libcamera") {
 			isMatch = true
 		}
-		
+
 		if isMatch {
 			filtered = append(filtered, p)
 		}
@@ -31,8 +32,8 @@ func sortPackages(pkgs []Package, term string) []Package {
 		if a.IsInstalled != b.IsInstalled {
 			return a.IsInstalled
 		}
-		aScore := getUnifiedScore(a, term)
-		bScore := getUnifiedScore(b, term)
+		aScore := GetUnifiedScore(a, term)
+		bScore := GetUnifiedScore(b, term)
 		if aScore != bScore {
 			return aScore > bScore
 		}
@@ -126,13 +127,13 @@ func TestPopularApplicationsSorting(t *testing.T) {
 			{Name: "chrome-remote-desktop", Source: "AUR", Votes: 127, IsInstalled: false},
 			{Name: "my-chrome-theme", Source: "AUR", Votes: 0, IsInstalled: true}, // Installed!
 		}
-		
+
 		results := sortPackages(customPool, term)
 
 		if results[0].Name != "my-chrome-theme" {
 			t.Errorf("expected installed package my-chrome-theme to be at rank 0, got %s", results[0].Name)
 		}
-		
+
 		if results[1].Name != "google-chrome" {
 			t.Errorf("expected google-chrome at rank 1, got %s", results[1].Name)
 		}
@@ -162,4 +163,65 @@ func TestPopularApplicationsSorting(t *testing.T) {
 			t.Errorf("expected slack-term at rank 2, got %s", results[2].Name)
 		}
 	})
+}
+
+func TestGetAurScore(t *testing.T) {
+	term := "chrome"
+
+	pExact := Package{Name: "chrome", Source: "AUR", Votes: 10}
+	pPrefixHigh := Package{Name: "chrome-bin", Source: "AUR", Votes: 1000}
+	pPrefixLow := Package{Name: "chrome-git", Source: "AUR", Votes: 5}
+	pSubHigh := Package{Name: "google-chrome", Source: "AUR", Votes: 5000}
+	pSubLow := Package{Name: "my-chrome-theme", Source: "AUR", Votes: 0}
+
+	scoreExact := GetUnifiedScore(pExact, term)
+	scorePrefixHigh := GetUnifiedScore(pPrefixHigh, term)
+	scorePrefixLow := GetUnifiedScore(pPrefixLow, term)
+	scoreSubHigh := GetUnifiedScore(pSubHigh, term)
+	scoreSubLow := GetUnifiedScore(pSubLow, term)
+
+	if scoreExact <= scoreSubHigh {
+		t.Errorf("expected scoreExact (%f) to be higher than scoreSubHigh (%f)", scoreExact, scoreSubHigh)
+	}
+	if scoreSubHigh <= scorePrefixHigh {
+		t.Errorf("expected scoreSubHigh (%f) to be higher than scorePrefixHigh (%f)", scoreSubHigh, scorePrefixHigh)
+	}
+	if scorePrefixHigh <= scorePrefixLow {
+		t.Errorf("expected scorePrefixHigh (%f) to be higher than scorePrefixLow (%f)", scorePrefixHigh, scorePrefixLow)
+	}
+	if scorePrefixLow <= scoreSubLow {
+		t.Errorf("expected scorePrefixLow (%f) to be higher than scoreSubLow (%f)", scorePrefixLow, scoreSubLow)
+	}
+}
+
+func TestAurSorting(t *testing.T) {
+	term := "chrome"
+
+	pExact := Package{Name: "chrome", Source: "AUR", Votes: 10}
+	pPrefixHigh := Package{Name: "chrome-bin", Source: "AUR", Votes: 1000}
+	pPrefixLow := Package{Name: "chrome-git", Source: "AUR", Votes: 5}
+	pSubHigh := Package{Name: "google-chrome", Source: "AUR", Votes: 5000}
+	pSubLow := Package{Name: "my-chrome-theme", Source: "AUR", Votes: 0}
+
+	pkgs := []Package{pSubLow, pPrefixLow, pPrefixHigh, pExact, pSubHigh}
+
+	sort.Slice(pkgs, func(i, j int) bool {
+		a, b := pkgs[i], pkgs[j]
+		if a.IsInstalled != b.IsInstalled {
+			return a.IsInstalled
+		}
+		aScore := GetUnifiedScore(a, term)
+		bScore := GetUnifiedScore(b, term)
+		if aScore != bScore {
+			return aScore > bScore
+		}
+		return a.Name < b.Name
+	})
+
+	expectedOrder := []string{"chrome", "google-chrome", "chrome-bin", "chrome-git", "my-chrome-theme"}
+	for idx, p := range pkgs {
+		if p.Name != expectedOrder[idx] {
+			t.Errorf("at index %d: expected %s, got %s", idx, expectedOrder[idx], p.Name)
+		}
+	}
 }

@@ -1,10 +1,12 @@
-package tui
+// Package pkgmgr provides package management backend operations for AUR and local Pacman (ALPM) databases.
+package pkgmgr
 
 import (
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
+	"github.com/druxorey/drxpkg/internal/util"
 )
 
 const (
@@ -32,19 +34,16 @@ func GetPkgbuildURL(source, base string) string {
 	return fmt.Sprintf(URLAurPkgbuild, base)
 }
 
-func encodePackageGitlabURL(pkgname string) string {
-	for _, regex := range gitlabRepl {
-		pkgname = regex.match.ReplaceAllString(pkgname, regex.repl)
-	}
-	return pkgname
-}
-
 func GetPkgbuildContent(url string) (string, error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			util.PrintError("Failed to close response body: %v", err)
+		}
+	}()
 
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -53,3 +52,11 @@ func GetPkgbuildContent(url string) (string, error) {
 
 	return string(b), nil
 }
+
+func encodePackageGitlabURL(pkgname string) string {
+	for _, regex := range gitlabRepl {
+		pkgname = regex.match.ReplaceAllString(pkgname, regex.repl)
+	}
+	return pkgname
+}
+

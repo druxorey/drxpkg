@@ -1,4 +1,5 @@
-package tui
+// Package pkgmgr provides package management backend operations for AUR and local Pacman (ALPM) databases.
+package pkgmgr
 
 import (
 	"errors"
@@ -17,19 +18,19 @@ func InitPacmanDbs(dbPath, confPath string) (*alpm.Handle, error) {
 
 	conf, _, err := pconf.ParseFile(confPath)
 	if err != nil {
-		h.Release()
+		_ = h.Release()
 		return nil, err
 	}
 
 	for _, repo := range conf.Repos {
 		_, err := h.RegisterSyncDB(repo.Name, 0)
 		if err != nil {
-			h.Release()
+			_ = h.Release()
 			return nil, err
 		}
 	}
-	h.SetIgnorePkgs(conf.IgnorePkg)
-	h.SetIgnoreGroups(conf.IgnoreGroup)
+	_ = h.SetIgnorePkgs(conf.IgnorePkg)
+	_ = h.SetIgnoreGroups(conf.IgnoreGroup)
 
 	return h, nil
 }

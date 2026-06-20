@@ -1,4 +1,5 @@
-package tui
+// Package pkgmgr provides package management backend operations for AUR and local Pacman (ALPM) databases.
+package pkgmgr
 
 import (
 	"context"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"github.com/druxorey/drxpkg/internal/util"
 )
 
 const DefaultAurRPCURL = "https://aur.archlinux.org/rpc"
@@ -33,7 +35,11 @@ func SearchAur(ctx context.Context, aurURL, term string, timeoutMs int, maxResul
 	if err != nil {
 		return packages, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			util.PrintError("Failed to close response body: %v", err)
+		}
+	}()
 
 	var s SearchResults
 	if err = json.NewDecoder(resp.Body).Decode(&s); err != nil {
@@ -91,7 +97,11 @@ func InfoAur(aurURL string, timeoutMs int, pkgs ...string) SearchResults {
 	if err != nil {
 		return SearchResults{Error: err.Error()}
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			util.PrintError("Failed to close response body: %v", err)
+		}
+	}()
 
 	var p SearchResults
 	if err = json.NewDecoder(resp.Body).Decode(&p); err != nil {

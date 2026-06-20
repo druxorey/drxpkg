@@ -1,28 +1,23 @@
-// Package tui does something
+// Package tui manages the Terminal User Interface, layouts, user input, and screen rendering.
 package tui
 
 import (
 	"context"
 	"fmt"
 	"math"
-	"os"
-	"os/exec"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Jguer/go-alpm/v2"
+	"github.com/druxorey/drxpkg/internal/config"
+	"github.com/druxorey/drxpkg/internal/pkgmgr"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
-
-	"github.com/druxorey/drxpkg/internal/config"
-	"github.com/druxorey/drxpkg/internal/pkglist"
 )
 
 type cachedPkg struct {
-	Package
+	pkgmgr.Package
 	Description      string
 	NameLower        string
 	DescriptionLower string
@@ -57,17 +52,16 @@ type UI struct {
 	updatePageFlex    *tview.Flex
 	updateTable       *tview.Table
 	updateDetails     *tview.TextView
-	updatePackages    []UpdatePackage
-	selectedUpdate    *UpdatePackage
+	updatePackages    []pkgmgr.UpdatePackage
+	selectedUpdate    *pkgmgr.UpdatePackage
 	updateDetailsCache map[string]string
 	cacheMutex         sync.RWMutex
 
 	// State
 	activeTab      int
 	lastSearchTerm string
-	shownPackages  []Package
-	selectedPkg    *Package
-	// searching      bool
+	shownPackages  []pkgmgr.Package
+	selectedPkg    *pkgmgr.Package
 
 	// Fast Search Cache & Debouncing
 	searchMutex  sync.Mutex
@@ -96,7 +90,7 @@ func New(conf *config.Settings) (*UI, error) {
 	}
 
 	var err error
-	ui.alpmHandle, err = InitPacmanDbs(conf.PacmanDBPath, conf.PacmanConfigPath)
+	ui.alpmHandle, err = pkgmgr.InitPacmanDbs(conf.PacmanDBPath, conf.PacmanConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to init pacman db: %w", err)
 	}
@@ -123,7 +117,7 @@ func (ui *UI) reinitPacmanDbs() error {
 		_ = ui.alpmHandle.Release()
 	}
 	var err error
-	ui.alpmHandle, err = InitPacmanDbs(ui.conf.PacmanDBPath, ui.conf.PacmanConfigPath)
+	ui.alpmHandle, err = pkgmgr.InitPacmanDbs(ui.conf.PacmanDBPath, ui.conf.PacmanConfigPath)
 	ui.alpmMutex.Unlock()
 
 	if err == nil {
@@ -203,13 +197,8 @@ func (ui *UI) setupLayout() {
 		AddItem(installFlex, 0, 1, true).
 		AddItem(ui.detailsView, 0, 1, false)
 
-
-
-	// Tab 3: Package Management Placeholder
-	managePage := tview.NewTextView().
-		SetDynamicColors(true).
-		SetTextAlign(tview.AlignCenter).
-		SetText("\n\n[blue]Package Management[-]\n\nThis page is currently a placeholder.")
+	// Tab 3: Package Management Page
+	managePage := ui.setupManagePage()
 
 	// Tab 4: Settings Page
 	ui.pages.AddPage("install", installPage, true, true)
@@ -371,7 +360,7 @@ func (ui *UI) rebuildCache() {
 	for _, db := range dbs.Slice() {
 		for _, pkg := range db.PkgCache().Slice() {
 			cache = append(cache, cachedPkg{
-				Package: Package{
+				Package: pkgmgr.Package{
 					Name:         pkg.Name(),
 					Source:       db.Name(),
 					IsInstalled:  local.Pkg(pkg.Name()) != nil,
@@ -388,7 +377,7 @@ func (ui *UI) rebuildCache() {
 	// Local DB (only those not already in sync or representing local modifications)
 	for _, pkg := range local.PkgCache().Slice() {
 		cache = append(cache, cachedPkg{
-			Package: Package{
+			Package: pkgmgr.Package{
 				Name:         pkg.Name(),
 				Source:       local.Name(),
 				IsInstalled:  true,
@@ -404,276 +393,8 @@ func (ui *UI) rebuildCache() {
 	ui.pkgsCache = cache
 }
 
-func (ui *UI) handleSearchChange(text string) {
-	term := strings.TrimSpace(text)
-	ui.lastSearchTerm = term
-
-	// Instantly update local search results
-	ui.performLocalSearch(term)
-
-	// Schedule debounced remote AUR search
-	ui.scheduleAurSearch(term)
-}
-
-func (ui *UI) performLocalSearch(term string) {
-	if term == "" {
-		ui.shownPackages = nil
-		ui.renderPackageTable()
-		ui.setStatus("")
-		return
-	}
-
-	termLower := strings.ToLower(term)
-	var reposPkgs []Package
-	var localPkgs []Package
-
-	ui.alpmMutex.Lock()
-	for _, cp := range ui.pkgsCache {
-		if strings.Contains(cp.NameLower, termLower) ||
-			strings.Contains(cp.DescriptionLower, termLower) {
-			if cp.Source == "local" {
-				localPkgs = append(localPkgs, cp.Package)
-			} else {
-				reposPkgs = append(reposPkgs, cp.Package)
-			}
-		}
-	}
-	ui.alpmMutex.Unlock()
-
-	allPkgs := append(reposPkgs, localPkgs...)
-
-	uniqueMap := make(map[string]Package)
-	for _, p := range allPkgs {
-		existing, exists := uniqueMap[p.Name]
-		if !exists || (!existing.IsInstalled && p.IsInstalled) {
-			uniqueMap[p.Name] = p
-		}
-	}
-
-	var resultList []Package
-	for _, p := range uniqueMap {
-		resultList = append(resultList, p)
-	}
-
-	sort.Slice(resultList, func(i, j int) bool {
-		a, b := resultList[i], resultList[j]
-		if a.IsInstalled != b.IsInstalled {
-			return a.IsInstalled
-		}
-		aScore := getUnifiedScore(a, term)
-		bScore := getUnifiedScore(b, term)
-		if aScore != bScore {
-			return aScore > bScore
-		}
-		return a.Name < b.Name
-	})
-
-	if len(resultList) > ui.conf.MaxResults {
-		resultList = resultList[:ui.conf.MaxResults]
-	}
-
-	ui.shownPackages = resultList
-	ui.renderPackageTable()
-
-	if len(resultList) == 0 {
-		ui.setStatus("No packages found.")
-	} else {
-		ui.setStatus(fmt.Sprintf("Found %d packages.", len(resultList)))
-	}
-}
-
-func (ui *UI) scheduleAurSearch(term string) {
-	ui.searchMutex.Lock()
-	defer ui.searchMutex.Unlock()
-
-	if ui.searchCancel != nil {
-		ui.searchCancel()
-		ui.searchCancel = nil
-	}
-
-	if ui.searchTimer != nil {
-		ui.searchTimer.Stop()
-		ui.searchTimer = nil
-	}
-
-	if len(term) < 3 || ui.conf.DisableAur {
-		return
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	ui.searchCancel = cancel
-
-	ui.searchTimer = time.AfterFunc(200*time.Millisecond, func() {
-		ui.runAurSearch(ctx, term)
-	})
-}
-
-func (ui *UI) runAurSearch(ctx context.Context, term string) {
-	ui.app.QueueUpdateDraw(func() {
-		if ctx.Err() == nil {
-			ui.setStatus("Searching AUR...")
-		}
-	})
-
-	aurPkgs, err := SearchAur(ctx, "", term, 5000, 2000)
-	if err != nil {
-		if ctx.Err() != nil {
-			return
-		}
-		ui.app.QueueUpdateDraw(func() {
-			ui.setStatus("[red]AUR Search error: " + err.Error())
-		})
-		return
-	}
-
-	installedMap := make(map[string]bool)
-	ui.alpmMutex.Lock()
-	for _, cp := range ui.pkgsCache {
-		if cp.IsInstalled {
-			installedMap[cp.Name] = true
-		}
-	}
-	ui.alpmMutex.Unlock()
-
-	for idx := range aurPkgs {
-		aurPkgs[idx].IsInstalled = installedMap[aurPkgs[idx].Name]
-	}
-
-	if ctx.Err() != nil {
-		return
-	}
-
-	ui.app.QueueUpdateDraw(func() {
-		if ctx.Err() != nil {
-			return
-		}
-
-		termLower := strings.ToLower(term)
-		var reposPkgs []Package
-		var localPkgs []Package
-
-		ui.alpmMutex.Lock()
-		for _, cp := range ui.pkgsCache {
-			if strings.Contains(cp.NameLower, termLower) ||
-				strings.Contains(cp.DescriptionLower, termLower) {
-				if cp.Source == "local" {
-					localPkgs = append(localPkgs, cp.Package)
-				} else {
-					reposPkgs = append(reposPkgs, cp.Package)
-				}
-			}
-		}
-		ui.alpmMutex.Unlock()
-
-		allPkgs := append(reposPkgs, localPkgs...)
-		allPkgs = append(allPkgs, aurPkgs...)
-
-		uniqueMap := make(map[string]Package)
-		for _, p := range allPkgs {
-			existing, exists := uniqueMap[p.Name]
-			if !exists || (!existing.IsInstalled && p.IsInstalled) {
-				uniqueMap[p.Name] = p
-			}
-		}
-
-		var resultList []Package
-		for _, p := range uniqueMap {
-			resultList = append(resultList, p)
-		}
-
-		sort.Slice(resultList, func(i, j int) bool {
-			a, b := resultList[i], resultList[j]
-			if a.IsInstalled != b.IsInstalled {
-				return a.IsInstalled
-			}
-			aScore := getUnifiedScore(a, term)
-			bScore := getUnifiedScore(b, term)
-			if aScore != bScore {
-				return aScore > bScore
-			}
-			return a.Name < b.Name
-		})
-
-		if len(resultList) > ui.conf.MaxResults {
-			resultList = resultList[:ui.conf.MaxResults]
-		}
-
-		ui.shownPackages = resultList
-		ui.renderPackageTable()
-
-		if len(resultList) == 0 {
-			ui.setStatus("No packages found.")
-		} else {
-			ui.setStatus(fmt.Sprintf("Found %d packages (incl. AUR).", len(resultList)))
-		}
-	})
-}
-
-func (ui *UI) forceSearch(term string) {
-	ui.searchMutex.Lock()
-	defer ui.searchMutex.Unlock()
-
-	if ui.searchCancel != nil {
-		ui.searchCancel()
-		ui.searchCancel = nil
-	}
-
-	if ui.searchTimer != nil {
-		ui.searchTimer.Stop()
-		ui.searchTimer = nil
-	}
-
-	ui.lastSearchTerm = term
-	ui.performLocalSearch(term)
-
-	if ui.conf.DisableAur || term == "" {
-		return
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	ui.searchCancel = cancel
-
-	go ui.runAurSearch(ctx, term)
-}
-
-func (ui *UI) renderPackageTable() {
-	ui.pkgTable.Clear()
-
-	// Header row
-	ui.pkgTable.SetCell(0, 0, tview.NewTableCell("Package").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetExpansion(1))
-	ui.pkgTable.SetCell(0, 1, tview.NewTableCell("Source").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(12))
-	ui.pkgTable.SetCell(0, 2, tview.NewTableCell("Installed").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(10))
-	ui.pkgTable.SetCell(0, 3, tview.NewTableCell("Reputation").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(12))
-
-	for idx, p := range ui.shownPackages {
-		installedStr := "No"
-		installedCell := tview.NewTableCell(installedStr).SetMaxWidth(10)
-		if p.IsInstalled {
-			installedStr = "Yes"
-			installedCell.SetText(installedStr).
-				SetStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Attributes(tcell.AttrBold))
-		} else {
-			installedCell.SetTextColor(tcell.ColorGray)
-		}
-
-		sourceColor := getSourceColor(p.Source)
-		sourceCell := tview.NewTableCell(p.Source).SetTextColor(sourceColor).SetMaxWidth(12)
-
-		pkgCell := tview.NewTableCell(p.Name).SetTextColor(tcell.ColorDefault).SetExpansion(1)
-
-		reputationStr := ""
-		if p.Source == "AUR" {
-			reputationStr = strconv.Itoa(p.Votes)
-		}
-		reputationCell := tview.NewTableCell(reputationStr).SetTextColor(tcell.ColorDefault).SetMaxWidth(12)
-
-		ui.pkgTable.SetCell(idx+1, 0, pkgCell)
-		ui.pkgTable.SetCell(idx+1, 1, sourceCell)
-		ui.pkgTable.SetCell(idx+1, 2, installedCell)
-		ui.pkgTable.SetCell(idx+1, 3, reputationCell)
-	}
-	ui.pkgTable.ScrollToBeginning()
-	ui.pkgTable.Select(1, 0)
+func (ui *UI) setStatus(msg string) {
+	ui.statusText.SetText(msg)
 }
 
 func getSourceColor(source string) tcell.Color {
@@ -689,540 +410,4 @@ func getSourceColor(source string) tcell.Color {
 	default:
 		return tcell.ColorDefault
 	}
-}
-
-func (ui *UI) loadPackageDetails(pkg Package) {
-	ui.detailsView.Clear()
-	ui.detailsView.SetTitle(fmt.Sprintf(" Details: %s ", pkg.Name))
-
-	go func() {
-		var info SearchResults
-		if pkg.Source == "AUR" {
-			info = InfoAur("", 5000, pkg.Name)
-		} else {
-			ui.alpmMutex.Lock()
-			info = InfoPacman(ui.alpmHandle, pkg.Name)
-			ui.alpmMutex.Unlock()
-		}
-
-		ui.app.QueueUpdateDraw(func() {
-			if len(info.Results) == 0 {
-				ui.detailsView.SetText("[red]Error fetching details")
-				return
-			}
-
-			record := info.Results[0]
-			fields := []struct {
-				label string
-				value string
-			}{
-				{"Description", record.Description},
-				{"Version", record.Version},
-				{"Local Ver", record.LocalVersion},
-				{"Source", record.Source},
-				{"Architecture", record.Architecture},
-				{"URL", record.URL},
-				{"Licenses", strings.Join(record.License, ", ")},
-				{"Maintainer", record.Maintainer},
-			}
-
-			var sb strings.Builder
-			for _, f := range fields {
-				if f.value == "" {
-					continue
-				}
-				if f.label == "Description" {
-					fmt.Fprintf(&sb, "[blue]%s:[-]\n%s\n\n", f.label, f.value)
-				} else {
-					fmt.Fprintf(&sb, "[blue]%s:[-] %s\n", f.label, f.value)
-				}
-			}
-
-			// Dependencies
-			if len(record.Depends) > 0 {
-				fmt.Fprintf(&sb, "\n[blue]Dependencies:[-]\n%s\n", strings.Join(record.Depends, ", "))
-			}
-
-			ui.detailsView.SetText(sb.String())
-			ui.detailsView.ScrollToBeginning()
-		})
-	}()
-}
-
-func getUnifiedScore(p Package, term string) float64 {
-	nameLower := strings.ToLower(p.Name)
-	termLower := strings.ToLower(term)
-
-	var matchScore float64
-	if nameLower == termLower {
-		matchScore = 1000000.0
-	} else if strings.HasPrefix(nameLower, termLower) {
-		matchScore = 30000.0
-	} else if strings.Contains(nameLower, termLower) {
-		matchScore = 10000.0
-	} else {
-		matchScore = 1000.0 // Description match
-	}
-
-	// Source trust bonus (+5,000 for official repositories)
-	var sourceBonus float64
-	if p.Source != "AUR" && p.Source != "local" {
-		sourceBonus = 5000.0
-	}
-
-	// Reputation (AUR votes) heavily weighted
-	reputation := float64(p.Votes) * 30.0
-
-	// Name length tie-breaker (shorter names get a small bonus)
-	nameLen := len(p.Name)
-	if nameLen == 0 {
-		nameLen = 1
-	}
-	lengthBonus := 100.0 / float64(nameLen)
-
-	return matchScore + sourceBonus + reputation + lengthBonus
-}
-
-func (ui *UI) installOrUninstallPackage(pkg Package) {
-	cmdStr := ui.conf.InstallCommand
-	isInstall := true
-	if pkg.IsInstalled {
-		cmdStr = ui.conf.UninstallCommand
-		isInstall = false
-	}
-
-	ui.app.Suspend(func() {
-		// Clean terminal screen using standard ANSI code
-		fmt.Print("\033[H\033[2J")
-
-		var fullCommand string
-		if strings.Contains(cmdStr, "{pkg}") {
-			fullCommand = strings.ReplaceAll(cmdStr, "{pkg}", pkg.Name)
-		} else {
-			fullCommand = cmdStr + " " + pkg.Name
-		}
-
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/sh"
-		}
-
-		fmt.Printf("Running: %s\n\n", fullCommand)
-		cmd := exec.Command(shell, "-c", fullCommand)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		err := cmd.Run()
-		if err == nil {
-			if isInstall {
-				_ = pkglist.AddPackage(ui.conf.PackagesPath, pkg.Name)
-				fmt.Printf("\033[1;32m[SUCCESS]\033[0m Package '%s' installed and added to drxboot.packages.\n", pkg.Name)
-			} else {
-				_ = pkglist.RemovePackage(ui.conf.PackagesPath, pkg.Name)
-				fmt.Printf("\033[1;32m[SUCCESS]\033[0m Package '%s' uninstalled and removed from drxboot.packages.\n", pkg.Name)
-			}
-			fmt.Println("\nPress ENTER to return to drxpkg...")
-			_, _ = os.Stdin.Read(make([]byte, 1))
-		} else {
-			fmt.Printf("\033[1;31m[ERROR]\033[0m Command failed: %v\nPress ENTER to return to drxpkg...", err)
-			_, _ = os.Stdin.Read(make([]byte, 1))
-		}
-	})
-
-	_ = ui.reinitPacmanDbs()
-	if ui.lastSearchTerm != "" {
-		ui.forceSearch(ui.lastSearchTerm)
-	}
-}
-
-func (ui *UI) showConfirmation(message string, onConfirm func()) {
-	prevFocus := ui.app.GetFocus()
-	modal := tview.NewModal().
-		SetText(message).
-		AddButtons([]string{"Yes", "No"}).
-		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-			ui.pages.RemovePage("confirmation")
-			ui.app.SetFocus(prevFocus)
-			if buttonLabel == "Yes" {
-				onConfirm()
-			}
-		})
-	modal.SetBackgroundColor(tcell.ColorBlack)
-	modal.SetTextColor(tcell.ColorDefault)
-	modal.SetButtonBackgroundColor(tcell.ColorBlue)
-	modal.SetButtonTextColor(tcell.ColorWhite)
-	ui.pages.AddPage("confirmation", modal, true, true)
-}
-
-func (ui *UI) promptInstall(pkgName string) {
-	ui.showConfirmation(fmt.Sprintf("Are you sure you want to install package '%s'?", pkgName), func() {
-		ui.performInstallOrUninstall(pkgName, true)
-	})
-}
-
-func (ui *UI) promptUninstall(pkgName string) {
-	ui.showConfirmation(fmt.Sprintf("Are you sure you want to uninstall package '%s'?", pkgName), func() {
-		ui.performInstallOrUninstall(pkgName, false)
-	})
-}
-
-func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
-	cmdStr := ui.conf.InstallCommand
-	if !isInstall {
-		cmdStr = ui.conf.UninstallCommand
-	}
-
-	ui.app.Suspend(func() {
-		fmt.Print("\033[H\033[2J")
-
-		var fullCommand string
-		if strings.Contains(cmdStr, "{pkg}") {
-			fullCommand = strings.ReplaceAll(cmdStr, "{pkg}", pkgName)
-		} else {
-			fullCommand = cmdStr + " " + pkgName
-		}
-
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/sh"
-		}
-
-		fmt.Printf("Running: %s\n\n", fullCommand)
-		cmd := exec.Command(shell, "-c", fullCommand)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		err := cmd.Run()
-		if err == nil {
-			if isInstall {
-				_ = pkglist.AddPackage(ui.conf.PackagesPath, pkgName)
-				fmt.Printf("\033[1;32m[SUCCESS]\033[0m Package '%s' installed and added to drxboot.packages.\n", pkgName)
-			} else {
-				_ = pkglist.RemovePackage(ui.conf.PackagesPath, pkgName)
-				fmt.Printf("\033[1;32m[SUCCESS]\033[0m Package '%s' uninstalled and removed from drxboot.packages.\n", pkgName)
-			}
-			fmt.Println("\nPress ENTER to return to drxpkg...")
-			_, _ = os.Stdin.Read(make([]byte, 1))
-		} else {
-			fmt.Printf("\033[1;31m[ERROR]\033[0m Command failed: %v\nPress ENTER to return to drxpkg...", err)
-			_, _ = os.Stdin.Read(make([]byte, 1))
-		}
-	})
-
-	_ = ui.reinitPacmanDbs()
-	if ui.activeTab == 0 {
-		if ui.lastSearchTerm != "" {
-			ui.forceSearch(ui.lastSearchTerm)
-		}
-	} else if ui.activeTab == 1 {
-		ui.updatePackages = nil
-		ui.checkForUpdates()
-	}
-}
-
-func (ui *UI) setStatus(msg string) {
-	ui.statusText.SetText(msg)
-}
-
-func (ui *UI) setupSettingsPanel() {
-	// Initialize inputs
-	ui.settingInputs = make([]*tview.InputField, 7)
-	ui.settingInputs[0] = tview.NewInputField().SetText(ui.conf.PackagesPath)
-	ui.settingInputs[1] = tview.NewInputField().SetText(ui.conf.PacmanDBPath)
-	ui.settingInputs[2] = tview.NewInputField().SetText(ui.conf.PacmanConfigPath)
-	ui.settingInputs[3] = tview.NewInputField().SetText(ui.conf.InstallCommand)
-	ui.settingInputs[4] = tview.NewInputField().SetText(ui.conf.UninstallCommand)
-	ui.settingInputs[5] = tview.NewInputField().SetText(ui.conf.SysUpgradeCmd)
-	ui.settingInputs[6] = tview.NewInputField().SetText(strconv.Itoa(ui.conf.MaxResults))
-
-	for i, input := range ui.settingInputs {
-		idx := i
-		input.SetBorder(true).SetBorderColor(tcell.ColorGray)
-		input.SetFieldBackgroundColor(tcell.ColorDefault)
-		input.SetFieldTextColor(tcell.ColorDefault)
-
-		input.SetFocusFunc(func() {
-			ui.settingsFocusedIndex = idx
-			ui.settingsEditMode = true
-			ui.updateSettingsDisplay()
-		})
-
-		input.SetBlurFunc(func() {
-			ui.settingsEditMode = false
-			ui.updateSettingsDisplay()
-		})
-
-		input.SetDoneFunc(func(key tcell.Key) {
-			if key == tcell.KeyEnter || key == tcell.KeyEscape {
-				ui.settingsEditMode = false
-				ui.app.SetFocus(ui.settingsGrid)
-				ui.updateSettingsDisplay()
-			}
-		})
-	}
-
-	// Initialize checkboxes
-	ui.settingAurCb = tview.NewCheckbox().SetLabel("").SetChecked(ui.conf.DisableAur)
-	ui.settingAurCb.SetFocusFunc(func() {
-		ui.settingsFocusedIndex = 7
-		ui.updateSettingsDisplay()
-	})
-
-	ui.settingHooksCb = tview.NewCheckbox().SetLabel("").SetChecked(ui.conf.RunUpdateHooks)
-	ui.settingHooksCb.SetFocusFunc(func() {
-		ui.settingsFocusedIndex = 8
-		ui.updateSettingsDisplay()
-	})
-
-	// Initialize buttons
-	ui.btnSave = tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignCenter)
-	ui.btnDefaults = tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignCenter)
-
-	// Settings Box layout (centered inside grid)
-	settingsBox := tview.NewFlex().SetDirection(tview.FlexRow)
-	settingsBox.SetBorder(true).
-		SetTitle(" Settings ").
-		SetBorderColor(tcell.ColorBlue).
-		SetTitleColor(tcell.ColorBlue)
-
-	// Fields Grid: 7 inputs (height 3 each), 2 checkboxes (height 1 each)
-	fieldsGrid := tview.NewGrid().
-		SetRows(3, 3, 3, 3, 3, 3, 3, 1, 1).
-		SetColumns(25, 0)
-
-	labels := []string{
-		"Packages Save Path",
-		"Pacman DB Path",
-		"Pacman Config Path",
-		"Install Command",
-		"Uninstall Command",
-		"Upgrade Command",
-		"Max Results",
-		"Disable AUR",
-		"Run Update Hooks",
-	}
-
-	for i, name := range labels {
-		lblText := "  " + name
-		if i < 7 {
-			lblText = "\n" + lblText
-		}
-		lbl := tview.NewTextView().SetDynamicColors(true).SetText(lblText)
-		lbl.SetTextColor(tcell.ColorDefault)
-
-		if i < 7 {
-			fieldsGrid.AddItem(lbl, i, 0, 1, 1, 0, 0, false)
-			fieldsGrid.AddItem(ui.settingInputs[i], i, 1, 1, 1, 0, 0, false)
-		} else if i == 7 {
-			fieldsGrid.AddItem(lbl, i, 0, 1, 1, 0, 0, false)
-			fieldsGrid.AddItem(ui.settingAurCb, i, 1, 1, 1, 0, 0, false)
-		} else {
-			fieldsGrid.AddItem(lbl, i, 0, 1, 1, 0, 0, false)
-			fieldsGrid.AddItem(ui.settingHooksCb, i, 1, 1, 1, 0, 0, false)
-		}
-	}
-
-	// Buttons Flex Row
-	buttonsFlex := tview.NewFlex().SetDirection(tview.FlexColumn).
-		AddItem(nil, 0, 1, false).
-		AddItem(ui.btnSave, 18, 0, false).
-		AddItem(nil, 4, 0, false).
-		AddItem(ui.btnDefaults, 14, 0, false).
-		AddItem(nil, 0, 1, false)
-
-	settingsBox.
-		AddItem(fieldsGrid, 0, 1, false).
-		AddItem(nil, 1, 0, false). // spacer
-		AddItem(buttonsFlex, 2, 0, false).
-		AddItem(nil, 1, 0, false) // spacer
-
-	// Center the settingsBox using a grid
-	ui.settingsGrid = tview.NewGrid().
-		SetRows(0, 30, 0).
-		SetColumns(0, 75, 0).
-		AddItem(settingsBox, 1, 1, 1, 1, 0, 0, true)
-
-	// Set input capture on settingsGrid for navigation (11 indices: 0..10)
-	ui.settingsGrid.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if ui.settingsEditMode {
-			return event
-		}
-
-		switch event.Key() {
-		case tcell.KeyUp:
-			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 10) % 11
-			ui.updateSettingsDisplay()
-			return nil
-		case tcell.KeyDown:
-			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 1) % 11
-			ui.updateSettingsDisplay()
-			return nil
-		case tcell.KeyLeft:
-			if ui.settingsFocusedIndex == 10 {
-				ui.settingsFocusedIndex = 9
-				ui.updateSettingsDisplay()
-				return nil
-			}
-		case tcell.KeyRight:
-			if ui.settingsFocusedIndex == 9 {
-				ui.settingsFocusedIndex = 10
-				ui.updateSettingsDisplay()
-				return nil
-			}
-		case tcell.KeyTAB:
-			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 1) % 11
-			ui.updateSettingsDisplay()
-			return nil
-		case tcell.KeyBacktab:
-			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 10) % 11
-			ui.updateSettingsDisplay()
-			return nil
-		case tcell.KeyEnter:
-			ui.handleSettingsSelect()
-			return nil
-		}
-
-		switch event.Rune() {
-		case 'j', 'J':
-			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 1) % 11
-			ui.updateSettingsDisplay()
-			return nil
-		case 'k', 'K':
-			ui.settingsFocusedIndex = (ui.settingsFocusedIndex + 10) % 11
-			ui.updateSettingsDisplay()
-			return nil
-		case 'h', 'H':
-			if ui.settingsFocusedIndex == 10 {
-				ui.settingsFocusedIndex = 9
-				ui.updateSettingsDisplay()
-				return nil
-			}
-		case 'l', 'L':
-			if ui.settingsFocusedIndex == 9 {
-				ui.settingsFocusedIndex = 10
-				ui.updateSettingsDisplay()
-				return nil
-			}
-		case 'i', 'I':
-			ui.handleSettingsSelect()
-			return nil
-		}
-
-		return event
-	})
-
-	ui.updateSettingsDisplay()
-}
-
-func (ui *UI) updateSettingsDisplay() {
-	// Reset all inputs border color
-	for i, input := range ui.settingInputs {
-		if i == ui.settingsFocusedIndex {
-			if ui.settingsEditMode {
-				input.SetBorderColor(tcell.ColorGreen)
-			} else {
-				input.SetBorderColor(tcell.ColorBlue)
-			}
-		} else {
-			input.SetBorderColor(tcell.ColorGray)
-		}
-	}
-
-	// Disable AUR Checkbox styling
-	if ui.settingsFocusedIndex == 7 {
-		ui.settingAurCb.SetFieldBackgroundColor(tcell.ColorYellow)
-		ui.settingAurCb.SetFieldTextColor(tcell.ColorBlack)
-	} else {
-		ui.settingAurCb.SetFieldBackgroundColor(tcell.ColorDefault)
-		ui.settingAurCb.SetFieldTextColor(tcell.ColorWhite)
-	}
-
-	// Run Update Hooks Checkbox styling
-	if ui.settingsFocusedIndex == 8 {
-		ui.settingHooksCb.SetFieldBackgroundColor(tcell.ColorYellow)
-		ui.settingHooksCb.SetFieldTextColor(tcell.ColorBlack)
-	} else {
-		ui.settingHooksCb.SetFieldBackgroundColor(tcell.ColorDefault)
-		ui.settingHooksCb.SetFieldTextColor(tcell.ColorWhite)
-	}
-
-	// Save button styling
-	if ui.settingsFocusedIndex == 9 {
-		ui.btnSave.SetTextColor(tcell.ColorDefault)
-		ui.btnSave.SetBackgroundColor(tcell.ColorBlue)
-		ui.btnSave.SetText("Apply & Save")
-	} else {
-		ui.btnSave.SetTextColor(tcell.ColorWhite)
-		ui.btnSave.SetBackgroundColor(tcell.ColorGray)
-		ui.btnSave.SetText("Apply & Save")
-	}
-
-	// Defaults button styling
-	if ui.settingsFocusedIndex == 10 {
-		ui.btnDefaults.SetTextColor(tcell.ColorDefault)
-		ui.btnDefaults.SetBackgroundColor(tcell.ColorBlue)
-		ui.btnDefaults.SetText("Defaults")
-	} else {
-		ui.btnDefaults.SetTextColor(tcell.ColorWhite)
-		ui.btnDefaults.SetBackgroundColor(tcell.ColorGray)
-		ui.btnDefaults.SetText("Defaults")
-	}
-}
-
-func (ui *UI) handleSettingsSelect() {
-	if ui.settingsFocusedIndex >= 0 && ui.settingsFocusedIndex < 7 {
-		ui.settingsEditMode = true
-		ui.updateSettingsDisplay()
-		ui.app.SetFocus(ui.settingInputs[ui.settingsFocusedIndex])
-	} else if ui.settingsFocusedIndex == 7 {
-		ui.settingAurCb.SetChecked(!ui.settingAurCb.IsChecked())
-		ui.updateSettingsDisplay()
-	} else if ui.settingsFocusedIndex == 8 {
-		ui.settingHooksCb.SetChecked(!ui.settingHooksCb.IsChecked())
-		ui.updateSettingsDisplay()
-	} else if ui.settingsFocusedIndex == 9 {
-		ui.saveSettingsAction()
-	} else if ui.settingsFocusedIndex == 10 {
-		ui.loadSettingsDefaults()
-	}
-}
-
-func (ui *UI) saveSettingsAction() {
-	ui.conf.PackagesPath = ui.settingInputs[0].GetText()
-	ui.conf.PacmanDBPath = ui.settingInputs[1].GetText()
-	ui.conf.PacmanConfigPath = ui.settingInputs[2].GetText()
-	ui.conf.InstallCommand = ui.settingInputs[3].GetText()
-	ui.conf.UninstallCommand = ui.settingInputs[4].GetText()
-	ui.conf.SysUpgradeCmd = ui.settingInputs[5].GetText()
-
-	maxRes, err := strconv.Atoi(ui.settingInputs[6].GetText())
-	if err == nil {
-		ui.conf.MaxResults = maxRes
-	}
-
-	ui.conf.DisableAur = ui.settingAurCb.IsChecked()
-	ui.conf.RunUpdateHooks = ui.settingHooksCb.IsChecked()
-
-	if err := ui.conf.Save(); err != nil {
-		ui.setStatus("Error saving settings: " + err.Error())
-	} else {
-		ui.setStatus("Settings saved successfully!")
-	}
-	_ = ui.reinitPacmanDbs()
-}
-
-func (ui *UI) loadSettingsDefaults() {
-	ui.conf = config.Defaults()
-	ui.settingInputs[0].SetText(ui.conf.PackagesPath)
-	ui.settingInputs[1].SetText(ui.conf.PacmanDBPath)
-	ui.settingInputs[2].SetText(ui.conf.PacmanConfigPath)
-	ui.settingInputs[3].SetText(ui.conf.InstallCommand)
-	ui.settingInputs[4].SetText(ui.conf.UninstallCommand)
-	ui.settingInputs[5].SetText(ui.conf.SysUpgradeCmd)
-	ui.settingInputs[6].SetText(strconv.Itoa(ui.conf.MaxResults))
-	ui.settingAurCb.SetChecked(ui.conf.DisableAur)
-	ui.settingHooksCb.SetChecked(ui.conf.RunUpdateHooks)
-	ui.setStatus("Settings reset to defaults!")
 }

@@ -1,4 +1,10 @@
-package tui
+// Package pkgmgr provides package management backend operations for AUR and local Pacman (ALPM) databases.
+package pkgmgr
+
+import (
+	"fmt"
+	"strings"
+)
 
 type SearchResults struct {
 	Error       string       `json:"error,omitempty"`
@@ -55,4 +61,28 @@ type Package struct {
 	LastModified int
 	Popularity   float64
 	Votes        int
+}
+
+type UpdatePackage struct {
+	Name         string
+	LocalVersion string
+	NewVersion   string
+	Source       string
+	Selected     bool
+	NotInAur     bool
+	OutOfDate    bool
+}
+
+func ParseUpdateLine(line string) (*UpdatePackage, error) {
+	// Format: <pkgname> <current_version> -> <new_version>
+	parts := strings.Fields(line)
+	if len(parts) < 4 || parts[2] != "->" {
+		return nil, fmt.Errorf("invalid line format: %s", line)
+	}
+	return &UpdatePackage{
+		Name:         parts[0],
+		LocalVersion: parts[1],
+		NewVersion:   parts[3],
+		Selected:     true,
+	}, nil
 }

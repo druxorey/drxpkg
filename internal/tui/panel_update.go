@@ -1,3 +1,4 @@
+// Package tui manages the Terminal User Interface, layouts, user input, and screen rendering.
 package tui
 
 import (
@@ -13,19 +14,11 @@ import (
 	"time"
 
 	"github.com/druxorey/drxpkg/internal/config"
+	"github.com/druxorey/drxpkg/internal/pkgmgr"
+	"github.com/druxorey/drxpkg/internal/util"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
-
-type UpdatePackage struct {
-	Name         string
-	LocalVersion string
-	NewVersion   string
-	Source       string
-	Selected     bool
-	NotInAur     bool
-	OutOfDate    bool
-}
 
 func (ui *UI) setupUpdatePage() {
 	ui.updateTable = tview.NewTable().
@@ -230,21 +223,7 @@ func (ui *UI) getPackageSource(pkgName string) string {
 	return "AUR"
 }
 
-func ParseUpdateLine(line string) (*UpdatePackage, error) {
-	// Format: <pkgname> <current_version> -> <new_version>
-	parts := strings.Fields(line)
-	if len(parts) < 4 || parts[2] != "->" {
-		return nil, fmt.Errorf("invalid line format: %s", line)
-	}
-	return &UpdatePackage{
-		Name:         parts[0],
-		LocalVersion: parts[1],
-		NewVersion:   parts[3],
-		Selected:     true,
-	}, nil
-}
-
-func (ui *UI) countUpdatesInfo(pkgs []UpdatePackage) (totalUpdates, aurUpdates, outOfDate, notInAur int) {
+func (ui *UI) countUpdatesInfo(pkgs []pkgmgr.UpdatePackage) (totalUpdates, aurUpdates, outOfDate, notInAur int) {
 	for _, p := range pkgs {
 		if p.NotInAur {
 			notInAur++
@@ -304,7 +283,7 @@ func (ui *UI) backgroundUpdateCheck() {
 		cmdAur := exec.Command("yay", "-Qua")
 		outAur, _ := cmdAur.Output()
 
-		var pkgs []UpdatePackage
+		var pkgs []pkgmgr.UpdatePackage
 
 		// Parse AUR updates
 		linesAur := strings.Split(string(outAur), "\n")
@@ -313,7 +292,7 @@ func (ui *UI) backgroundUpdateCheck() {
 			if line == "" {
 				continue
 			}
-			pkg, err := ParseUpdateLine(line)
+			pkg, err := pkgmgr.ParseUpdateLine(line)
 			if err == nil {
 				pkg.Source = "AUR"
 				pkgs = append(pkgs, *pkg)
@@ -327,7 +306,7 @@ func (ui *UI) backgroundUpdateCheck() {
 			if line == "" {
 				continue
 			}
-			pkg, err := ParseUpdateLine(line)
+			pkg, err := pkgmgr.ParseUpdateLine(line)
 			if err == nil {
 				pkg.Source = ui.getPackageSource(pkg.Name)
 				if pkg.Source == "AUR" {
@@ -366,7 +345,7 @@ func (ui *UI) backgroundUpdateCheck() {
 		ui.alpmMutex.Unlock()
 
 		// Query AUR RPC in chunks of 100 to classify NotInAur and OutOfDate
-		var aurResults []InfoRecord
+		var aurResults []pkgmgr.InfoRecord
 		const chunkSize = 100
 		for i := 0; i < len(foreignPkgs); i += chunkSize {
 			end := i + chunkSize
@@ -374,11 +353,11 @@ func (ui *UI) backgroundUpdateCheck() {
 				end = len(foreignPkgs)
 			}
 			chunk := foreignPkgs[i:end]
-			info := InfoAur("", 5000, chunk...)
+			info := pkgmgr.InfoAur("", 5000, chunk...)
 			aurResults = append(aurResults, info.Results...)
 		}
 
-		aurFound := make(map[string]InfoRecord)
+		aurFound := make(map[string]pkgmgr.InfoRecord)
 		for _, r := range aurResults {
 			aurFound[r.Name] = r
 		}
@@ -420,7 +399,7 @@ func (ui *UI) backgroundUpdateCheck() {
 				}
 			}
 			if !exists {
-				pkgs = append(pkgs, UpdatePackage{
+				pkgs = append(pkgs, pkgmgr.UpdatePackage{
 					Name:         name,
 					LocalVersion: getLocalVersion(name),
 					NewVersion:   "-",
@@ -442,7 +421,7 @@ func (ui *UI) backgroundUpdateCheck() {
 			if foundIdx != -1 {
 				pkgs[foundIdx].OutOfDate = true
 			} else {
-				pkgs = append(pkgs, UpdatePackage{
+				pkgs = append(pkgs, pkgmgr.UpdatePackage{
 					Name:         name,
 					LocalVersion: getLocalVersion(name),
 					NewVersion:   "-",
@@ -518,7 +497,7 @@ func (ui *UI) backgroundUpdateCheck() {
 	}()
 }
 
-func countAur(pkgs []UpdatePackage) int {
+func countAur(pkgs []pkgmgr.UpdatePackage) int {
 	count := 0
 	for _, p := range pkgs {
 		if p.Source == "AUR" {
@@ -528,7 +507,7 @@ func countAur(pkgs []UpdatePackage) int {
 	return count
 }
 
-func (ui *UI) loadUpdateDetails(pkg UpdatePackage) {
+func (ui *UI) loadUpdateDetails(pkg pkgmgr.UpdatePackage) {
 	ui.cacheMutex.RLock()
 	cachedText, exists := ui.updateDetailsCache[pkg.Name]
 	ui.cacheMutex.RUnlock()
@@ -543,7 +522,7 @@ func (ui *UI) loadUpdateDetails(pkg UpdatePackage) {
 	go ui.preloadUpdateDetails(pkg)
 }
 
-func (ui *UI) preloadUpdateDetails(pkg UpdatePackage) {
+func (ui *UI) preloadUpdateDetails(pkg pkgmgr.UpdatePackage) {
 	ui.cacheMutex.RLock()
 	_, exists := ui.updateDetailsCache[pkg.Name]
 	ui.cacheMutex.RUnlock()
@@ -573,12 +552,12 @@ func (ui *UI) preloadUpdateDetails(pkg UpdatePackage) {
 		return
 	}
 
-	var info SearchResults
+	var info pkgmgr.SearchResults
 	if pkg.Source == "AUR" {
-		info = InfoAur("", 5000, pkg.Name)
+		info = pkgmgr.InfoAur("", 5000, pkg.Name)
 	} else {
 		ui.alpmMutex.Lock()
-		info = InfoPacman(ui.alpmHandle, pkg.Name)
+		info = pkgmgr.InfoPacman(ui.alpmHandle, pkg.Name)
 		ui.alpmMutex.Unlock()
 	}
 
@@ -606,7 +585,7 @@ func (ui *UI) preloadUpdateDetails(pkg UpdatePackage) {
 	}
 
 	// Fetch remote PKGBUILD
-	remoteURL := GetPkgbuildURL(pkg.Source, pkgBase)
+	remoteURL := pkgmgr.GetPkgbuildURL(pkg.Source, pkgBase)
 	if remoteURL != "" {
 		remotePKGBUILD, _ = getPkgbuildContentWithTimeout(remoteURL, 5*time.Second)
 	}
@@ -817,9 +796,9 @@ func (ui *UI) runUpgradeProcess() {
 
 		err := upgradeCmd.Run()
 		if err != nil {
-			fmt.Printf("\n\033[1;31m[ERROR]\033[0m System upgrade failed: %v\n", err)
+			util.PrintError("\nSystem upgrade failed: %v\n", err)
 		} else {
-			fmt.Printf("\n\033[1;32m[SUCCESS]\033[0m System upgrade completed successfully.\n")
+			util.PrintSuccess("\nSystem upgrade completed successfully.\n")
 		}
 
 		ui.runUpdateHooks()
@@ -833,7 +812,6 @@ func (ui *UI) runUpgradeProcess() {
 	ui.checkForUpdates()
 }
 
-
 func (ui *UI) runUpdateHooks() {
 	if !ui.conf.RunUpdateHooks {
 		fmt.Printf("\nUpdate hooks are disabled in settings.\n")
@@ -842,19 +820,19 @@ func (ui *UI) runUpdateHooks() {
 
 	configDir, err := config.GetConfigDir()
 	if err != nil {
-		fmt.Printf("\n\033[1;31m[ERROR]\033[0m Failed to get config directory: %v\n", err)
+		util.PrintError("\nFailed to get config directory: %v\n", err)
 		return
 	}
 
 	hooksDir := filepath.Join(configDir, "update_hooks")
 	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		fmt.Printf("\n\033[1;31m[ERROR]\033[0m Failed to create update hooks directory: %v\n", err)
+		util.PrintError("\nFailed to create update hooks directory: %v\n", err)
 		return
 	}
 
 	files, err := os.ReadDir(hooksDir)
 	if err != nil {
-		fmt.Printf("\n\033[1;31m[ERROR]\033[0m Failed to read update hooks directory: %v\n", err)
+		util.PrintError("\nFailed to read update hooks directory: %v\n", err)
 		return
 	}
 
@@ -884,13 +862,12 @@ func (ui *UI) runUpdateHooks() {
 		cmd.Stderr = os.Stderr
 
 		if err := cmd.Run(); err != nil {
-			fmt.Printf("\033[1;31m[ERROR]\033[0m Hook '%s' failed: %v\n", filename, err)
+			util.PrintError("Hook '%s' failed: %v\n", filename, err)
 		} else {
-			fmt.Printf("\033[1;32m[SUCCESS]\033[0m Hook '%s' completed.\n", filename)
+			util.PrintSuccess("Hook '%s' completed.\n", filename)
 		}
 	}
 }
-
 
 func hasFlag(args []string, flag string) bool {
 	return slices.Contains(args, flag)

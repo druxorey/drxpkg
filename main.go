@@ -7,11 +7,12 @@ import (
 
 	"github.com/druxorey/drxpkg/internal/config"
 	"github.com/druxorey/drxpkg/internal/tui"
+	"github.com/druxorey/drxpkg/internal/util"
 )
 
 func main() {
 	if os.Getuid() == 0 {
-		fmt.Println("drxpkg should not be run as root.")
+		util.PrintError("drxpkg should not be run as root.\n")
 		os.Exit(1)
 	}
 
@@ -28,20 +29,20 @@ func main() {
 
 	conf, err := config.Load()
 	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
+		util.PrintError("Could not load config: %v\n", err)
 		os.Exit(1)
 	}
 
 	appUI, err := tui.New(conf)
 	if err != nil {
-		fmt.Printf("Initialization error: %v\n", err)
+		util.PrintError("Could not initialize: %v\n", err)
 		os.Exit(1)
 	} else {
 		fmt.Print("\033[H\033[2J")
 	}
 
 	if err := appUI.Start(); err != nil {
-		fmt.Printf("Error running application: %v\n", err)
+		util.PrintError("Could not run the application: %v\n", err)
 		os.Exit(1)
 	}
 }

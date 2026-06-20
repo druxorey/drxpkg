@@ -1,4 +1,4 @@
-// Package pkglist does something
+// Package pkglist provides functionality to read, write, and manipulate the tracked packages list file.
 package pkglist
 
 import (
@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"github.com/druxorey/drxpkg/internal/util"
 )
 
 const PackagesFileName = "drxboot.packages"
@@ -67,7 +68,11 @@ func Load(customPath string) (PackageMap, error) {
 		}
 		return packages, err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			util.PrintError("Could not close file: %v", err)
+		}
+	}()
 
 	scanner := bufio.NewScanner(file)
 	var currentCat string
@@ -110,7 +115,11 @@ func Save(customPath string, packages PackageMap) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			util.PrintError("Could not save file: %v", err)
+		}
+	}()
 
 	writer := bufio.NewWriter(file)
 	_, _ = writer.WriteString("#!/bin/bash\n\n")
