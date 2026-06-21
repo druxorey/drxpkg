@@ -251,15 +251,45 @@ func (ui *UI) forceSearch(term string) {
 }
 
 func (ui *UI) renderPackageTable() {
+	ui.isRendering = true
+	defer func() { ui.isRendering = false }()
+
+	selectedRow, _ := ui.pkgTable.GetSelection()
+
 	ui.pkgTable.Clear()
 
 	// Header row
-	ui.pkgTable.SetCell(0, 0, tview.NewTableCell("Package").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetExpansion(1))
-	ui.pkgTable.SetCell(0, 1, tview.NewTableCell("Source").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(12))
-	ui.pkgTable.SetCell(0, 2, tview.NewTableCell("Installed").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(10))
-	ui.pkgTable.SetCell(0, 3, tview.NewTableCell("Reputation").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(12))
+	ui.pkgTable.SetCell(0, 0, tview.NewTableCell("").SetSelectable(false).SetMaxWidth(8))
+	ui.pkgTable.SetCell(0, 1, tview.NewTableCell("Package").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetExpansion(1))
+	ui.pkgTable.SetCell(0, 2, tview.NewTableCell("Source").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(12))
+	ui.pkgTable.SetCell(0, 3, tview.NewTableCell("Installed").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(10))
+	ui.pkgTable.SetCell(0, 4, tview.NewTableCell("Reputation").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(12))
 
 	for idx, p := range ui.shownPackages {
+		row := idx + 1
+		isHighlighted := false
+		if ui.inVisualMode && ui.activeTab == 0 {
+			minRow := min(ui.visualStartRow, ui.visualEndRow)
+			maxRow := max(ui.visualStartRow, ui.visualEndRow)
+			if row >= minRow && row <= maxRow {
+				isHighlighted = true
+			}
+		}
+
+		selStr := "   "
+		if ui.selectedInstall[p.Name] {
+			selStr = "  x"
+		}
+		selCell := tview.NewTableCell(selStr).SetMaxWidth(8).SetAlign(tview.AlignLeft)
+		if ui.selectedInstall[p.Name] {
+			selCell.SetTextColor(tcell.ColorGreen)
+		}
+
+		pkgCell := tview.NewTableCell(p.Name).SetTextColor(tcell.ColorDefault).SetExpansion(1)
+
+		sourceColor := getSourceColor(p.Source)
+		sourceCell := tview.NewTableCell(p.Source).SetTextColor(sourceColor).SetMaxWidth(12)
+
 		installedStr := "No"
 		installedCell := tview.NewTableCell(installedStr).SetMaxWidth(10)
 		if p.IsInstalled {
@@ -270,24 +300,34 @@ func (ui *UI) renderPackageTable() {
 			installedCell.SetTextColor(tcell.ColorGray)
 		}
 
-		sourceColor := getSourceColor(p.Source)
-		sourceCell := tview.NewTableCell(p.Source).SetTextColor(sourceColor).SetMaxWidth(12)
-
-		pkgCell := tview.NewTableCell(p.Name).SetTextColor(tcell.ColorDefault).SetExpansion(1)
-
 		reputationStr := ""
 		if p.Source == "AUR" {
 			reputationStr = strconv.Itoa(p.Votes)
 		}
 		reputationCell := tview.NewTableCell(reputationStr).SetTextColor(tcell.ColorDefault).SetMaxWidth(12)
 
-		ui.pkgTable.SetCell(idx+1, 0, pkgCell)
-		ui.pkgTable.SetCell(idx+1, 1, sourceCell)
-		ui.pkgTable.SetCell(idx+1, 2, installedCell)
-		ui.pkgTable.SetCell(idx+1, 3, reputationCell)
+		if isHighlighted {
+			bgColor := tcell.NewHexColor(0x1a3a5c)
+			selCell.SetBackgroundColor(bgColor)
+			pkgCell.SetBackgroundColor(bgColor)
+			sourceCell.SetBackgroundColor(bgColor)
+			installedCell.SetBackgroundColor(bgColor)
+			reputationCell.SetBackgroundColor(bgColor)
+		}
+
+		ui.pkgTable.SetCell(row, 0, selCell)
+		ui.pkgTable.SetCell(row, 1, pkgCell)
+		ui.pkgTable.SetCell(row, 2, sourceCell)
+		ui.pkgTable.SetCell(row, 3, installedCell)
+		ui.pkgTable.SetCell(row, 4, reputationCell)
 	}
-	ui.pkgTable.ScrollToBeginning()
-	ui.pkgTable.Select(1, 0)
+
+	if selectedRow > 0 && selectedRow <= len(ui.shownPackages) {
+		ui.pkgTable.Select(selectedRow, 0)
+	} else if len(ui.shownPackages) > 0 {
+		ui.pkgTable.ScrollToBeginning()
+		ui.pkgTable.Select(1, 0)
+	}
 }
 
 func (ui *UI) loadPackageDetails(pkg pkgmgr.Package) {
@@ -421,13 +461,27 @@ func (ui *UI) showConfirmation(message string, onConfirm func()) {
 }
 
 func (ui *UI) promptInstall(pkgName string) {
-	ui.showConfirmation(fmt.Sprintf("Are you sure you want to install package '%s'?", pkgName), func() {
+	pkgs := strings.Fields(pkgName)
+	var message string
+	if len(pkgs) > 1 {
+		message = fmt.Sprintf("Are you sure you want to install these %d packages?", len(pkgs))
+	} else {
+		message = fmt.Sprintf("Are you sure you want to install package '%s'?", pkgName)
+	}
+	ui.showConfirmation(message, func() {
 		ui.performInstallOrUninstall(pkgName, true)
 	})
 }
 
 func (ui *UI) promptUninstall(pkgName string) {
-	ui.showConfirmation(fmt.Sprintf("Are you sure you want to uninstall package '%s'?", pkgName), func() {
+	pkgs := strings.Fields(pkgName)
+	var message string
+	if len(pkgs) > 1 {
+		message = fmt.Sprintf("Are you sure you want to uninstall these %d packages?", len(pkgs))
+	} else {
+		message = fmt.Sprintf("Are you sure you want to uninstall package '%s'?", pkgName)
+	}
+	ui.showConfirmation(message, func() {
 		ui.performInstallOrUninstall(pkgName, false)
 	})
 }
@@ -461,12 +515,15 @@ func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
 
 		err := cmd.Run()
 		if err == nil {
-			if isInstall {
-				_ = pkglist.AddPackage(ui.conf.PackagesPath, pkgName)
-				util.PrintSuccess("Package '%s' installed and added to drxboot.packages.\n", pkgName)
-			} else {
-				_ = pkglist.RemovePackage(ui.conf.PackagesPath, pkgName)
-				util.PrintSuccess("Package '%s' uninstalled and removed from drxboot.packages.\n", pkgName)
+			pkgs := strings.Fields(pkgName)
+			for _, p := range pkgs {
+				if isInstall {
+					_ = pkglist.AddPackage(ui.conf.PackagesPath, p)
+					util.PrintSuccess("Package '%s' installed and added to drxboot.packages.\n", p)
+				} else {
+					_ = pkglist.RemovePackage(ui.conf.PackagesPath, p)
+					util.PrintSuccess("Package '%s' uninstalled and removed from drxboot.packages.\n", p)
+				}
 			}
 			fmt.Println("\nPress ENTER to return to drxpkg...")
 			_, _ = os.Stdin.Read(make([]byte, 1))
@@ -478,6 +535,7 @@ func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
 
 	_ = ui.reinitPacmanDbs()
 	if ui.activeTab == 0 {
+		ui.selectedInstall = make(map[string]bool)
 		if ui.lastSearchTerm != "" {
 			ui.forceSearch(ui.lastSearchTerm)
 		}

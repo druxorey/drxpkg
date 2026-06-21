@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -68,6 +69,14 @@ type UI struct {
 	searchCancel context.CancelFunc
 	searchTimer  *time.Timer
 	pkgsCache    []cachedPkg
+
+	// Visual Mode State
+	inVisualMode    bool
+	visualStartRow  int
+	visualEndRow    int
+	selectedInstall map[string]bool
+	isRendering     bool
+	statusMessage   string
 }
 
 func New(conf *config.Settings) (*UI, error) {
@@ -87,6 +96,7 @@ func New(conf *config.Settings) (*UI, error) {
 		app:                tview.NewApplication(),
 		activeTab:          0,
 		updateDetailsCache: make(map[string]string),
+		selectedInstall:    make(map[string]bool),
 	}
 
 	var err error
@@ -172,6 +182,13 @@ func (ui *UI) setupWidgets() {
 
 	// Tab 1 Packages Selection Change
 	ui.pkgTable.SetSelectionChangedFunc(func(row, column int) {
+		if ui.isRendering {
+			return
+		}
+		if ui.inVisualMode {
+			ui.visualEndRow = row
+			ui.renderPackageTable()
+		}
 		if row <= 0 || row > len(ui.shownPackages) {
 			ui.selectedPkg = nil
 			ui.detailsView.Clear()
@@ -314,20 +331,65 @@ func (ui *UI) setupKeyboard() {
 			ui.app.SetFocus(ui.searchField)
 			return nil
 		}
+		if event.Key() == tcell.KeyEscape {
+			if ui.inVisualMode {
+				ui.inVisualMode = false
+				ui.updateStatusDisplay()
+				ui.renderPackageTable()
+				return nil
+			}
+		}
+		if event.Key() == tcell.KeyRune && (event.Rune() == 'v' || event.Rune() == 'V') {
+			ui.inVisualMode = !ui.inVisualMode
+			if ui.inVisualMode {
+				row, _ := ui.pkgTable.GetSelection()
+				ui.visualStartRow = row
+				ui.visualEndRow = row
+			}
+			ui.updateStatusDisplay()
+			ui.renderPackageTable()
+			return nil
+		}
+		if event.Key() == tcell.KeyRune && event.Rune() == ' ' {
+			row, _ := ui.pkgTable.GetSelection()
+			if row > 0 && row <= len(ui.shownPackages) {
+				pkg := ui.shownPackages[row-1]
+				ui.selectedInstall[pkg.Name] = !ui.selectedInstall[pkg.Name]
+				ui.renderPackageTable()
+				ui.pkgTable.Select(row, 0)
+			}
+			return nil
+		}
 		if event.Key() == tcell.KeyEnter {
-			if ui.selectedPkg != nil {
-				ui.installOrUninstallPackage(*ui.selectedPkg)
+			if ui.inVisualMode {
+				minRow := min(ui.visualStartRow, ui.visualEndRow)
+				maxRow := max(ui.visualStartRow, ui.visualEndRow)
+				for r := minRow; r <= maxRow; r++ {
+					if r > 0 && r <= len(ui.shownPackages) {
+						name := ui.shownPackages[r-1].Name
+						ui.selectedInstall[name] = !ui.selectedInstall[name]
+					}
+				}
+				ui.inVisualMode = false
+				ui.updateStatusDisplay()
+				ui.renderPackageTable()
 			}
 			return nil
 		}
 		if event.Key() == tcell.KeyRune && (event.Rune() == 'u' || event.Rune() == 'U') {
-			if ui.selectedPkg != nil {
+			selectedPkgs := ui.getSelectedInstallPackages()
+			if len(selectedPkgs) > 0 {
+				ui.promptUninstall(strings.Join(selectedPkgs, " "))
+			} else if ui.selectedPkg != nil {
 				ui.promptUninstall(ui.selectedPkg.Name)
 			}
 			return nil
 		}
 		if event.Key() == tcell.KeyRune && (event.Rune() == 'i' || event.Rune() == 'I') {
-			if ui.selectedPkg != nil {
+			selectedPkgs := ui.getSelectedInstallPackages()
+			if len(selectedPkgs) > 0 {
+				ui.promptInstall(strings.Join(selectedPkgs, " "))
+			} else if ui.selectedPkg != nil {
 				ui.promptInstall(ui.selectedPkg.Name)
 			}
 			return nil
@@ -394,20 +456,50 @@ func (ui *UI) rebuildCache() {
 }
 
 func (ui *UI) setStatus(msg string) {
-	ui.statusText.SetText(msg)
+	ui.statusMessage = msg
+	ui.updateStatusDisplay()
+}
+
+func (ui *UI) updateStatusDisplay() {
+	prefix := ""
+	if ui.inVisualMode {
+		prefix = "[yellow::b]SELECT MODE[-] "
+	}
+	ui.statusText.SetText(prefix + ui.statusMessage)
 }
 
 func getSourceColor(source string) tcell.Color {
 	switch strings.ToLower(source) {
 	case "core":
-		return tcell.ColorBlue
+		return tcell.ColorRed
 	case "extra":
 		return tcell.ColorGreen
 	case "multilib":
-		return tcell.NewHexColor(0xff00ff)
+		return tcell.ColorYellow
 	case "aur":
-		return tcell.NewHexColor(0x00ffff)
+		return tcell.ColorBlue
 	default:
 		return tcell.ColorDefault
 	}
+}
+
+func (ui *UI) getSelectedInstallPackages() []string {
+	var pkgs []string
+	for name, selected := range ui.selectedInstall {
+		if selected {
+			pkgs = append(pkgs, name)
+		}
+	}
+	sort.Strings(pkgs)
+	return pkgs
+}
+
+func (ui *UI) getSelectedUpdatePackages() []string {
+	var pkgs []string
+	for _, p := range ui.updatePackages {
+		if p.Selected && !p.NotInAur {
+			pkgs = append(pkgs, p.Name)
+		}
+	}
+	return pkgs
 }

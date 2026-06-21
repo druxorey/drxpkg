@@ -48,6 +48,13 @@ func (ui *UI) setupUpdatePage() {
 	})
 
 	ui.updateTable.SetSelectionChangedFunc(func(row, column int) {
+		if ui.isRendering {
+			return
+		}
+		if ui.inVisualMode {
+			ui.visualEndRow = row
+			ui.renderUpdateTable()
+		}
 		if row <= 0 || row > len(ui.updatePackages) {
 			ui.selectedUpdate = nil
 			ui.updateDetails.Clear()
@@ -64,6 +71,25 @@ func (ui *UI) setupUpdatePage() {
 			ui.app.SetFocus(ui.updateDetails)
 			return nil
 		}
+		if event.Key() == tcell.KeyEscape {
+			if ui.inVisualMode {
+				ui.inVisualMode = false
+				ui.updateStatusDisplay()
+				ui.renderUpdateTable()
+				return nil
+			}
+		}
+		if event.Key() == tcell.KeyRune && (event.Rune() == 'v' || event.Rune() == 'V') {
+			ui.inVisualMode = !ui.inVisualMode
+			if ui.inVisualMode {
+				row, _ := ui.updateTable.GetSelection()
+				ui.visualStartRow = row
+				ui.visualEndRow = row
+			}
+			ui.updateStatusDisplay()
+			ui.renderUpdateTable()
+			return nil
+		}
 		if event.Key() == tcell.KeyRune && event.Rune() == ' ' {
 			if row > 0 && row <= len(ui.updatePackages) {
 				ui.togglePackageSelection(row - 1)
@@ -76,19 +102,40 @@ func (ui *UI) setupUpdatePage() {
 			return nil
 		}
 		if event.Key() == tcell.KeyRune && (event.Rune() == 'u' || event.Rune() == 'U') {
-			if row > 0 && row <= len(ui.updatePackages) {
+			selectedPkgs := ui.getSelectedUpdatePackages()
+			if len(selectedPkgs) > 0 {
+				ui.promptUninstall(strings.Join(selectedPkgs, " "))
+			} else if row > 0 && row <= len(ui.updatePackages) {
 				ui.promptUninstall(ui.updatePackages[row-1].Name)
 			}
 			return nil
 		}
 		if event.Key() == tcell.KeyRune && (event.Rune() == 'i' || event.Rune() == 'I') {
-			if row > 0 && row <= len(ui.updatePackages) {
+			selectedPkgs := ui.getSelectedUpdatePackages()
+			if len(selectedPkgs) > 0 {
+				ui.promptInstall(strings.Join(selectedPkgs, " "))
+			} else if row > 0 && row <= len(ui.updatePackages) {
 				ui.promptInstall(ui.updatePackages[row-1].Name)
 			}
 			return nil
 		}
 		if event.Key() == tcell.KeyEnter {
-			ui.runUpgradeProcess()
+			if ui.inVisualMode {
+				minRow := min(ui.visualStartRow, ui.visualEndRow)
+				maxRow := max(ui.visualStartRow, ui.visualEndRow)
+				for r := minRow; r <= maxRow; r++ {
+					if r > 0 && r <= len(ui.updatePackages) {
+						if !ui.updatePackages[r-1].NotInAur {
+							ui.updatePackages[r-1].Selected = !ui.updatePackages[r-1].Selected
+						}
+					}
+				}
+				ui.inVisualMode = false
+				ui.updateStatusDisplay()
+				ui.renderUpdateTable()
+			} else {
+				ui.runUpgradeProcess()
+			}
 			return nil
 		}
 		return event
@@ -139,6 +186,11 @@ func (ui *UI) toggleSelectAll() {
 }
 
 func (ui *UI) renderUpdateTable() {
+	ui.isRendering = true
+	defer func() { ui.isRendering = false }()
+
+	selectedRow, _ := ui.updateTable.GetSelection()
+
 	ui.updateTable.Clear()
 
 	// Header row
@@ -150,6 +202,16 @@ func (ui *UI) renderUpdateTable() {
 	ui.updateTable.SetCell(0, 5, tview.NewTableCell("Source").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(12))
 
 	for idx, p := range ui.updatePackages {
+		row := idx + 1
+		isHighlighted := false
+		if ui.inVisualMode && ui.activeTab == 1 {
+			minRow := min(ui.visualStartRow, ui.visualEndRow)
+			maxRow := max(ui.visualStartRow, ui.visualEndRow)
+			if row >= minRow && row <= maxRow {
+				isHighlighted = true
+			}
+		}
+
 		selStr := "   "
 		if p.Selected {
 			selStr = "  x"
@@ -196,12 +258,28 @@ func (ui *UI) renderUpdateTable() {
 			}
 		}
 
-		ui.updateTable.SetCell(idx+1, 0, selCell)
-		ui.updateTable.SetCell(idx+1, 1, pkgCell)
-		ui.updateTable.SetCell(idx+1, 2, currCell)
-		ui.updateTable.SetCell(idx+1, 3, arrowCell)
-		ui.updateTable.SetCell(idx+1, 4, newCell)
-		ui.updateTable.SetCell(idx+1, 5, sourceCell)
+		if isHighlighted {
+			bgColor := tcell.NewHexColor(0x1a3a5c)
+			selCell.SetBackgroundColor(bgColor)
+			pkgCell.SetBackgroundColor(bgColor)
+			currCell.SetBackgroundColor(bgColor)
+			arrowCell.SetBackgroundColor(bgColor)
+			newCell.SetBackgroundColor(bgColor)
+			sourceCell.SetBackgroundColor(bgColor)
+		}
+
+		ui.updateTable.SetCell(row, 0, selCell)
+		ui.updateTable.SetCell(row, 1, pkgCell)
+		ui.updateTable.SetCell(row, 2, currCell)
+		ui.updateTable.SetCell(row, 3, arrowCell)
+		ui.updateTable.SetCell(row, 4, newCell)
+		ui.updateTable.SetCell(row, 5, sourceCell)
+	}
+
+	if selectedRow > 0 && selectedRow <= len(ui.updatePackages) {
+		ui.updateTable.Select(selectedRow, 0)
+	} else if len(ui.updatePackages) > 0 {
+		ui.updateTable.Select(1, 0)
 	}
 }
 
@@ -592,10 +670,10 @@ func (ui *UI) preloadUpdateDetails(pkg pkgmgr.UpdatePackage) {
 
 	var sb strings.Builder
 	if pkg.OutOfDate {
-		fmt.Fprintf(&sb, "[red]---------------------------------------------------------------[-]\n\n")
+		fmt.Fprintf(&sb, "[red]------------------------------------------------------------------[-]\n")
 		fmt.Fprintf(&sb, "[red]WARNING:[-] Flagged OUT OF DATE in the AUR.\n")
 		fmt.Fprintf(&sb, "It is recommended to avoid updating this package or uninstall it.\n")
-		fmt.Fprintf(&sb, "[red]---------------------------------------------------------------[-]\n\n")
+		fmt.Fprintf(&sb, "[red]------------------------------------------------------------------[-]\n\n")
 	}
 	if len(info.Results) > 0 {
 		record := info.Results[0]
