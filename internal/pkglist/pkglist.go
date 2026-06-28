@@ -20,10 +20,31 @@ type PackageMap map[string][]string
 
 func NewPackageMap() PackageMap {
 	pm := make(PackageMap)
-	for _, category := range Categories {
-		pm[category] = []string{}
-	}
+	pm["new_packages"] = []string{}
 	return pm
+}
+
+func parseBashArrayName(line string) (string, bool) {
+	parts := strings.SplitN(line, "=(", 2)
+	if len(parts) != 2 {
+		return "", false
+	}
+	name := strings.TrimSpace(parts[0])
+	if len(name) == 0 {
+		return "", false
+	}
+	for i, r := range name {
+		if i == 0 {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_') {
+				return "", false
+			}
+		} else {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+				return "", false
+			}
+		}
+	}
+	return name, true
 }
 
 func GetFilePath(customPath string, fileName string) (string, error) {
@@ -82,25 +103,58 @@ func Load(customPath string, fileName string) (PackageMap, error) {
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		matched := false
-
-		for _, cat := range Categories {
-			if strings.HasPrefix(line, fmt.Sprintf("%s_packages=(", cat)) {
-				currentCat = cat
-				matched = true
-				break
-			}
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
 		}
 
-		if matched {
-			continue
-		} else if line == ")" {
+		if line == ")" {
 			currentCat = ""
-		} else if currentCat != "" && line != "" && !strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		if cat, ok := parseBashArrayName(line); ok {
+			currentCat = cat
+			if _, exists := packages[currentCat]; !exists {
+				packages[currentCat] = []string{}
+			}
+			continue
+		}
+
+		if currentCat != "" {
 			packages[currentCat] = append(packages[currentCat], line)
 		}
 	}
 	return packages, scanner.Err()
+}
+
+func getOriginalArrayOrder(filePath string) ([]string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+
+	var order []string
+	seen := make(map[string]bool)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if name, ok := parseBashArrayName(line); ok {
+			if !seen[name] {
+				seen[name] = true
+				order = append(order, name)
+			}
+		}
+	}
+	return order, scanner.Err()
 }
 
 func Save(customPath string, fileName string, packages PackageMap) error {
@@ -109,6 +163,9 @@ func Save(customPath string, fileName string, packages PackageMap) error {
 		return err
 	}
 	dirPath := filepath.Dir(filePath)
+
+	// Get original order of arrays before overwriting the file.
+	originalOrder, _ := getOriginalArrayOrder(filePath)
 
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return err
@@ -127,8 +184,36 @@ func Save(customPath string, fileName string, packages PackageMap) error {
 	writer := bufio.NewWriter(file)
 	_, _ = writer.WriteString("#!/bin/bash\n\n")
 
-	for _, cat := range Categories {
-		_, _ = fmt.Fprintf(writer, "%s_packages=(\n", cat)
+	var finalKeys []string
+	seenKeys := make(map[string]bool)
+
+	// Keep the original order of keys, excluding "new_packages"
+	for _, key := range originalOrder {
+		if key != "new_packages" {
+			if _, exists := packages[key]; exists {
+				finalKeys = append(finalKeys, key)
+				seenKeys[key] = true
+			}
+		}
+	}
+
+	// Add any new keys alphabetically (excluding "new_packages")
+	var newKeys []string
+	for k := range packages {
+		if k != "new_packages" && !seenKeys[k] {
+			newKeys = append(newKeys, k)
+		}
+	}
+	sort.Strings(newKeys)
+	finalKeys = append(finalKeys, newKeys...)
+
+	// Always append "new_packages" at the end
+	if _, exists := packages["new_packages"]; exists {
+		finalKeys = append(finalKeys, "new_packages")
+	}
+
+	for _, cat := range finalKeys {
+		_, _ = fmt.Fprintf(writer, "%s=(\n", cat)
 
 		pkgMap := make(map[string]bool)
 		for _, p := range packages[cat] {
@@ -153,7 +238,14 @@ func Save(customPath string, fileName string, packages PackageMap) error {
 
 func FindPackageLocation(pkgName string, allPackages PackageMap) (string, string, bool) {
 	suffixes := []string{"", "-git", "-bin"}
-	for _, cat := range Categories {
+	
+	var keys []string
+	for k := range allPackages {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, cat := range keys {
 		pkgList := allPackages[cat]
 		for _, sfx := range suffixes {
 			fullPkgName := pkgName + sfx
@@ -184,7 +276,7 @@ func AddPackage(customPath string, fileName string, pkg string) error {
 		return nil
 	}
 
-	allPackages["new"] = append(allPackages["new"], pkg)
+	allPackages["new_packages"] = append(allPackages["new_packages"], pkg)
 	return Save(customPath, fileName, allPackages)
 }
 
