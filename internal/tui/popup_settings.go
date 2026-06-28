@@ -24,7 +24,8 @@ func (ui *UI) setupSettingsPanel() {
 	for i, input := range ui.settingInputs {
 		idx := i
 		input.SetBorder(true).SetBorderColor(tcell.ColorGray)
-		input.SetFieldBackgroundColor(tcell.ColorDefault)
+		input.SetBackgroundColor(tcell.ColorBlack)
+		input.SetFieldBackgroundColor(tcell.ColorBlack)
 		input.SetFieldTextColor(tcell.ColorDefault)
 
 		input.SetFocusFunc(func() {
@@ -49,12 +50,18 @@ func (ui *UI) setupSettingsPanel() {
 
 	// Initialize checkboxes
 	ui.settingAurCb = tview.NewCheckbox().SetLabel("").SetChecked(ui.conf.DisableAur)
+	ui.settingAurCb.SetBackgroundColor(tcell.ColorBlack)
+	ui.settingAurCb.SetFieldBackgroundColor(tcell.ColorBlack)
+	ui.settingAurCb.SetFieldTextColor(tcell.ColorDefault)
 	ui.settingAurCb.SetFocusFunc(func() {
 		ui.settingsFocusedIndex = 8
 		ui.updateSettingsDisplay()
 	})
 
 	ui.settingHooksCb = tview.NewCheckbox().SetLabel("").SetChecked(ui.conf.RunUpdateHooks)
+	ui.settingHooksCb.SetBackgroundColor(tcell.ColorBlack)
+	ui.settingHooksCb.SetFieldBackgroundColor(tcell.ColorBlack)
+	ui.settingHooksCb.SetFieldTextColor(tcell.ColorDefault)
 	ui.settingHooksCb.SetFocusFunc(func() {
 		ui.settingsFocusedIndex = 9
 		ui.updateSettingsDisplay()
@@ -64,17 +71,11 @@ func (ui *UI) setupSettingsPanel() {
 	ui.btnSave = tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignCenter)
 	ui.btnDefaults = tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignCenter)
 
-	// Settings Box layout (centered inside grid)
-	settingsBox := tview.NewFlex().SetDirection(tview.FlexRow)
-	settingsBox.SetBorder(true).
-		SetTitle(" Settings ").
-		SetBorderColor(tcell.ColorBlue).
-		SetTitleColor(tcell.ColorBlue)
-
 	// Fields Grid: 8 inputs (height 3 each), 2 checkboxes (height 1 each)
 	fieldsGrid := tview.NewGrid().
 		SetRows(3, 3, 3, 3, 3, 3, 3, 3, 1, 1).
 		SetColumns(25, 0)
+	fieldsGrid.SetBackgroundColor(tcell.ColorBlack)
 
 	labels := []string{
 		"Packages Save Path",
@@ -96,6 +97,7 @@ func (ui *UI) setupSettingsPanel() {
 		}
 		lbl := tview.NewTextView().SetDynamicColors(true).SetText(lblText)
 		lbl.SetTextColor(tcell.ColorDefault)
+		lbl.SetBackgroundColor(tcell.ColorBlack)
 
 		if i < 8 {
 			fieldsGrid.AddItem(lbl, i, 0, 1, 1, 0, 0, false)
@@ -116,18 +118,28 @@ func (ui *UI) setupSettingsPanel() {
 		AddItem(nil, 4, 0, false).
 		AddItem(ui.btnDefaults, 14, 0, false).
 		AddItem(nil, 0, 1, false)
+	buttonsFlex.SetBackgroundColor(tcell.ColorBlack)
 
-	settingsBox.
-		AddItem(fieldsGrid, 0, 1, false).
-		AddItem(nil, 1, 0, false). // spacer
-		AddItem(buttonsFlex, 2, 0, false).
-		AddItem(nil, 1, 0, false) // spacer
+	// Settings Box layout (centered inside grid)
+	settingsFlex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(fieldsGrid, 0, 1, true).
+		AddItem(nil, 1, 0, false).
+		AddItem(buttonsFlex, 2, 0, false)
+	settingsFlex.SetBackgroundColor(tcell.ColorBlack)
 
-	// Center the settingsBox using a grid
+	settingsFrame := tview.NewFrame(settingsFlex).
+		SetBorders(1, 1, 0, 0, 3, 3)
+	settingsFrame.SetBorder(true).
+		SetTitle(" Settings ").
+		SetBorderColor(tcell.ColorBlue).
+		SetTitleColor(tcell.ColorBlue)
+	settingsFrame.SetBackgroundColor(tcell.ColorBlack)
+
+	// Center the settingsFrame using a grid
 	ui.settingsGrid = tview.NewGrid().
-		SetRows(0, 33, 0).
-		SetColumns(0, 75, 0).
-		AddItem(settingsBox, 1, 1, 1, 1, 0, 0, true)
+		SetRows(0, 36, 0).
+		SetColumns(0, 85, 0).
+		AddItem(settingsFrame, 1, 1, 1, 1, 0, 0, true)
 
 	// Set input capture on settingsGrid for navigation (12 indices: 0..11)
 	ui.settingsGrid.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -220,7 +232,7 @@ func (ui *UI) updateSettingsDisplay() {
 		ui.settingAurCb.SetFieldBackgroundColor(tcell.ColorYellow)
 		ui.settingAurCb.SetFieldTextColor(tcell.ColorBlack)
 	} else {
-		ui.settingAurCb.SetFieldBackgroundColor(tcell.ColorDefault)
+		ui.settingAurCb.SetFieldBackgroundColor(tcell.ColorBlack)
 		ui.settingAurCb.SetFieldTextColor(tcell.ColorWhite)
 	}
 
@@ -229,7 +241,7 @@ func (ui *UI) updateSettingsDisplay() {
 		ui.settingHooksCb.SetFieldBackgroundColor(tcell.ColorYellow)
 		ui.settingHooksCb.SetFieldTextColor(tcell.ColorBlack)
 	} else {
-		ui.settingHooksCb.SetFieldBackgroundColor(tcell.ColorDefault)
+		ui.settingHooksCb.SetFieldBackgroundColor(tcell.ColorBlack)
 		ui.settingHooksCb.SetFieldTextColor(tcell.ColorWhite)
 	}
 
@@ -295,6 +307,7 @@ func (ui *UI) saveSettingsAction() {
 		ui.setStatus("Error saving settings: " + err.Error())
 	} else {
 		ui.setStatus("Settings saved successfully!")
+		ui.closeSettingsPopup()
 	}
 	_ = ui.reinitPacmanDbs()
 }
