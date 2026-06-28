@@ -421,11 +421,11 @@ func (ui *UI) installOrUninstallPackage(pkg pkgmgr.Package) {
 		err := cmd.Run()
 		if err == nil {
 			if isInstall {
-				_ = pkglist.AddPackage(ui.conf.PackagesPath, pkg.Name)
-				util.PrintSuccess("Package '%s' installed and added to drxboot.packages.\n", pkg.Name)
+				_ = pkglist.AddPackage(ui.conf.PackagesPath, ui.conf.PackagesFile, pkg.Name)
+				util.PrintSuccess("Package '%s' installed and added to %s.\n", pkg.Name, ui.conf.PackagesFile)
 			} else {
-				_ = pkglist.RemovePackage(ui.conf.PackagesPath, pkg.Name)
-				util.PrintSuccess("Package '%s' uninstalled and removed from drxboot.packages.\n", pkg.Name)
+				_ = pkglist.RemovePackage(ui.conf.PackagesPath, ui.conf.PackagesFile, pkg.Name)
+				util.PrintSuccess("Package '%s' uninstalled and removed from %s.\n", pkg.Name, ui.conf.PackagesFile)
 			}
 			fmt.Println("\nPress ENTER to return to drxpkg...")
 			_, _ = os.Stdin.Read(make([]byte, 1))
@@ -518,11 +518,11 @@ func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
 			pkgs := strings.Fields(pkgName)
 			for _, p := range pkgs {
 				if isInstall {
-					_ = pkglist.AddPackage(ui.conf.PackagesPath, p)
-					util.PrintSuccess("Package '%s' installed and added to drxboot.packages.\n", p)
+					_ = pkglist.AddPackage(ui.conf.PackagesPath, ui.conf.PackagesFile, p)
+					util.PrintSuccess("Package '%s' installed and added to %s.\n", p, ui.conf.PackagesFile)
 				} else {
-					_ = pkglist.RemovePackage(ui.conf.PackagesPath, p)
-					util.PrintSuccess("Package '%s' uninstalled and removed from drxboot.packages.\n", p)
+					_ = pkglist.RemovePackage(ui.conf.PackagesPath, ui.conf.PackagesFile, p)
+					util.PrintSuccess("Package '%s' uninstalled and removed from %s.\n", p, ui.conf.PackagesFile)
 				}
 			}
 			fmt.Println("\nPress ENTER to return to drxpkg...")

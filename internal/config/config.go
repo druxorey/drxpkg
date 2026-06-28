@@ -9,6 +9,7 @@ import (
 
 type Settings struct {
 	PackagesPath     string `json:"packages_path"`
+	PackagesFile     string `json:"packages_file"`
 	PacmanDBPath     string `json:"pacman_db_path"`
 	PacmanConfigPath string `json:"pacman_config_path"`
 	InstallCommand   string `json:"install_command"`
@@ -22,6 +23,7 @@ type Settings struct {
 func Defaults() *Settings {
 	return &Settings{
 		PackagesPath:     "$HOME/.local/share/",
+		PackagesFile:     "packages.list",
 		PacmanDBPath:     "/var/lib/pacman/",
 		PacmanConfigPath: "/etc/pacman.conf",
 		InstallCommand:   "yay -S",

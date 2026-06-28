@@ -16,16 +16,16 @@ func TestPkglistLoadSave(t *testing.T) {
 	pm["minimal"] = []string{"htop"}
 	pm["new"] = []string{"neovim"}
 
-	if err := Save(tempDir, pm); err != nil {
+	if err := Save(tempDir, "packages.list", pm); err != nil {
 		t.Fatalf("failed to save pkglist: %v", err)
 	}
 
-	expectedFile := filepath.Join(tempDir, PackagesFileName)
+	expectedFile := filepath.Join(tempDir, DefaultPackagesFileName)
 	if _, err := os.Stat(expectedFile); os.IsNotExist(err) {
 		t.Fatalf("expected packages file to exist at %s", expectedFile)
 	}
 
-	loaded, err := Load(tempDir)
+	loaded, err := Load(tempDir, "packages.list")
 	if err != nil {
 		t.Fatalf("failed to load pkglist: %v", err)
 	}
@@ -47,26 +47,26 @@ func TestPkglistLoadSave(t *testing.T) {
 		t.Errorf("failed to find firefox-bin mapping to firefox, got cat=%s, full=%s, found=%t", cat, full, found)
 	}
 
-	if err := AddPackage(tempDir, "git"); err != nil {
+	if err := AddPackage(tempDir, "packages.list", "git"); err != nil {
 		t.Fatalf("failed to add package: %v", err)
 	}
-	loaded, _ = Load(tempDir)
+	loaded, _ = Load(tempDir, "packages.list")
 	if !slicesContains(loaded["new"], "git") {
 		t.Errorf("expected git to be added to new list, got %v", loaded["new"])
 	}
 
-	if err := AddPackage(tempDir, "nginx"); err != nil {
+	if err := AddPackage(tempDir, "packages.list", "nginx"); err != nil {
 		t.Fatalf("failed duplicate add test: %v", err)
 	}
-	loaded, _ = Load(tempDir)
+	loaded, _ = Load(tempDir, "packages.list")
 	if len(loaded["new"]) != 2 {
 		t.Errorf("expected 2 new packages after duplicate add, got %d", len(loaded["new"]))
 	}
 
-	if err := RemovePackage(tempDir, "firefox"); err != nil {
+	if err := RemovePackage(tempDir, "packages.list", "firefox"); err != nil {
 		t.Fatalf("failed to remove package: %v", err)
 	}
-	loaded, _ = Load(tempDir)
+	loaded, _ = Load(tempDir, "packages.list")
 	if len(loaded["desktop"]) != 0 {
 		t.Errorf("expected desktop list to be empty after remove, got %v", loaded["desktop"])
 	}

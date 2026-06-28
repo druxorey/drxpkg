@@ -19,11 +19,15 @@ func TestConfigLoadSave(t *testing.T) {
 	if s.InstallCommand != "yay -S" {
 		t.Errorf("expected default InstallCommand to be 'yay -S', got '%s'", s.InstallCommand)
 	}
+	if s.PackagesFile != "packages.list" {
+		t.Errorf("expected default PackagesFile to be 'packages.list', got '%s'", s.PackagesFile)
+	}
 	if !s.RunUpdateHooks {
 		t.Errorf("expected default RunUpdateHooks to be true")
 	}
 
 	s.InstallCommand = "sudo pacman -S"
+	s.PackagesFile = "custom.list"
 	s.MaxResults = 1000
 	s.RunUpdateHooks = false
 	if err := s.Save(); err != nil {
@@ -47,6 +51,9 @@ func TestConfigLoadSave(t *testing.T) {
 
 	if loaded.InstallCommand != "sudo pacman -S" {
 		t.Errorf("expected loaded InstallCommand to be 'sudo pacman -S', got '%s'", loaded.InstallCommand)
+	}
+	if loaded.PackagesFile != "custom.list" {
+		t.Errorf("expected loaded PackagesFile to be 'custom.list', got '%s'", loaded.PackagesFile)
 	}
 	if loaded.MaxResults != 1000 {
 		t.Errorf("expected loaded MaxResults to be 1000, got %d", loaded.MaxResults)

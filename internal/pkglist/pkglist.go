@@ -12,7 +12,7 @@ import (
 	"github.com/druxorey/drxpkg/internal/util"
 )
 
-const PackagesFileName = "drxboot.packages"
+const DefaultPackagesFileName = "packages.list"
 
 var Categories = []string{"server", "minimal", "desktop", "new"}
 
@@ -26,7 +26,10 @@ func NewPackageMap() PackageMap {
 	return pm
 }
 
-func GetFilePath(customPath string) (string, error) {
+func GetFilePath(customPath string, fileName string) (string, error) {
+	if fileName == "" {
+		fileName = DefaultPackagesFileName
+	}
 	if customPath == "" {
 		customPath = os.Getenv("PACKAGES_PATH")
 	}
@@ -51,12 +54,12 @@ func GetFilePath(customPath string) (string, error) {
 	}
 	customPath = os.ExpandEnv(customPath)
 
-	return filepath.Join(customPath, PackagesFileName), nil
+	return filepath.Join(customPath, fileName), nil
 }
 
-func Load(customPath string) (PackageMap, error) {
+func Load(customPath string, fileName string) (PackageMap, error) {
 	packages := NewPackageMap()
-	filePath, err := GetFilePath(customPath)
+	filePath, err := GetFilePath(customPath, fileName)
 	if err != nil {
 		return packages, err
 	}
@@ -100,8 +103,8 @@ func Load(customPath string) (PackageMap, error) {
 	return packages, scanner.Err()
 }
 
-func Save(customPath string, packages PackageMap) error {
-	filePath, err := GetFilePath(customPath)
+func Save(customPath string, fileName string, packages PackageMap) error {
+	filePath, err := GetFilePath(customPath, fileName)
 	if err != nil {
 		return err
 	}
@@ -170,8 +173,8 @@ func FindPackageLocation(pkgName string, allPackages PackageMap) (string, string
 	return "", "", false
 }
 
-func AddPackage(customPath string, pkg string) error {
-	allPackages, err := Load(customPath)
+func AddPackage(customPath string, fileName string, pkg string) error {
+	allPackages, err := Load(customPath, fileName)
 	if err != nil {
 		return err
 	}
@@ -182,11 +185,11 @@ func AddPackage(customPath string, pkg string) error {
 	}
 
 	allPackages["new"] = append(allPackages["new"], pkg)
-	return Save(customPath, allPackages)
+	return Save(customPath, fileName, allPackages)
 }
 
-func RemovePackage(customPath string, pkg string) error {
-	allPackages, err := Load(customPath)
+func RemovePackage(customPath string, fileName string, pkg string) error {
+	allPackages, err := Load(customPath, fileName)
 	if err != nil {
 		return err
 	}
@@ -197,7 +200,7 @@ func RemovePackage(customPath string, pkg string) error {
 	}
 
 	allPackages[cat] = removeValue(allPackages[cat], fullPkgName)
-	return Save(customPath, allPackages)
+	return Save(customPath, fileName, allPackages)
 }
 
 func removeValue(slice []string, value string) []string {
