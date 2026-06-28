@@ -441,24 +441,7 @@ func (ui *UI) installOrUninstallPackage(pkg pkgmgr.Package) {
 	}
 }
 
-func (ui *UI) showConfirmation(message string, onConfirm func()) {
-	prevFocus := ui.app.GetFocus()
-	modal := tview.NewModal().
-		SetText(message).
-		AddButtons([]string{"Yes", "No"}).
-		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-			ui.pages.RemovePage("confirmation")
-			ui.app.SetFocus(prevFocus)
-			if buttonLabel == "Yes" {
-				onConfirm()
-			}
-		})
-	modal.SetBackgroundColor(tcell.ColorBlack)
-	modal.SetTextColor(tcell.ColorDefault)
-	modal.SetButtonBackgroundColor(tcell.ColorBlue)
-	modal.SetButtonTextColor(tcell.ColorWhite)
-	ui.pages.AddPage("confirmation", modal, true, true)
-}
+
 
 func (ui *UI) promptInstall(pkgName string) {
 	pkgs := strings.Fields(pkgName)

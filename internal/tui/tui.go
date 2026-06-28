@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,9 @@ type UI struct {
 	btnDefaults          *tview.TextView
 	settingsFocusedIndex int
 	settingsEditMode     bool
+	helpGrid             *tview.Grid
+	settingsPopupOpen    bool
+	helpPopupOpen        bool
 
 	// Tab 1: Install Views
 	searchField *tview.InputField
@@ -76,7 +80,8 @@ type UI struct {
 	visualEndRow    int
 	selectedInstall map[string]bool
 	isRendering     bool
-	statusMessage   string
+	statusMessage            string
+	confirmationFocusedIndex int
 }
 
 func New(conf *config.Settings) (*UI, error) {
@@ -200,6 +205,7 @@ func (ui *UI) setupWidgets() {
 	})
 	ui.setupUpdatePage()
 	ui.setupSettingsPanel()
+	ui.setupHelpPopup()
 }
 
 func (ui *UI) setupLayout() {
@@ -217,11 +223,12 @@ func (ui *UI) setupLayout() {
 	// Tab 3: Package Management Page
 	managePage := ui.setupManagePage()
 
-	// Tab 4: Settings Page
+	// Tab Pages
 	ui.pages.AddPage("install", installPage, true, true)
 	ui.pages.AddPage("update", ui.updatePageFlex, true, false)
 	ui.pages.AddPage("manage", managePage, true, false)
 	ui.pages.AddPage("settings", ui.settingsGrid, true, false)
+	ui.pages.AddPage("help", ui.helpGrid, true, false)
 
 	// Main Grid Layout
 	ui.grid = tview.NewGrid().
@@ -233,7 +240,7 @@ func (ui *UI) setupLayout() {
 }
 
 func (ui *UI) drawTabBar() {
-	tabs := []string{"[1] Install", "[2] Update", "[3] Manage", "[4] Settings"}
+	tabs := []string{"[1] Install", "[2] Update", "[3] Manage"}
 	var styledTabs []string
 	for i, tab := range tabs {
 		if i == ui.activeTab {
@@ -246,7 +253,7 @@ func (ui *UI) drawTabBar() {
 }
 
 func (ui *UI) switchTab(tabIndex int) {
-	if tabIndex < 0 || tabIndex > 3 {
+	if tabIndex < 0 || tabIndex > 2 {
 		return
 	}
 	ui.activeTab = tabIndex
@@ -262,29 +269,98 @@ func (ui *UI) switchTab(tabIndex int) {
 		ui.checkForUpdates()
 	case 2:
 		ui.pages.SwitchToPage("manage")
-	case 3:
-		ui.pages.SwitchToPage("settings")
-		ui.app.SetFocus(ui.settingsGrid)
 	}
 }
 
 func (ui *UI) setupKeyboard() {
 	// Global captures
 	ui.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		focused := ui.app.GetFocus()
-		_, isInputField := focused.(*tview.InputField)
+		if name, item := ui.pages.GetFrontPage(); name == "confirmation" {
+			if event.Key() == tcell.KeyEscape {
+				return event
+			}
+			if modal, ok := item.(*tview.Modal); ok {
+				switch event.Key() {
+				case tcell.KeyLeft, tcell.KeyBacktab:
+					if ui.confirmationFocusedIndex == 0 {
+						ui.confirmationFocusedIndex = 1
+					} else {
+						ui.confirmationFocusedIndex = 0
+					}
+					modal.SetFocus(ui.confirmationFocusedIndex)
+					ui.app.SetFocus(modal)
+					return nil
+				case tcell.KeyRight, tcell.KeyTab:
+					if ui.confirmationFocusedIndex == 1 {
+						ui.confirmationFocusedIndex = 0
+					} else {
+						ui.confirmationFocusedIndex = 1
+					}
+					modal.SetFocus(ui.confirmationFocusedIndex)
+					ui.app.SetFocus(modal)
+					return nil
+				}
 
-		if !isInputField {
-			if event.Key() == tcell.KeyEscape || event.Rune() == 'q' || event.Rune() == 'Q' {
-				ui.app.Stop()
+				switch event.Rune() {
+				case 'h', 'H', 'k', 'K':
+					if ui.confirmationFocusedIndex == 0 {
+						ui.confirmationFocusedIndex = 1
+					} else {
+						ui.confirmationFocusedIndex = 0
+					}
+					modal.SetFocus(ui.confirmationFocusedIndex)
+					ui.app.SetFocus(modal)
+					return nil
+				case 'l', 'L', 'j', 'J':
+					if ui.confirmationFocusedIndex == 1 {
+						ui.confirmationFocusedIndex = 0
+					} else {
+						ui.confirmationFocusedIndex = 1
+					}
+					modal.SetFocus(ui.confirmationFocusedIndex)
+					ui.app.SetFocus(modal)
+					return nil
+				}
+			}
+		}
+
+		if event.Key() == tcell.KeyEscape {
+			if name, _ := ui.pages.GetFrontPage(); name == "confirmation" {
+				return event
+			}
+			if ui.helpPopupOpen {
+				ui.closeHelpPopup()
 				return nil
 			}
-		} else {
-			if event.Key() == tcell.KeyCtrlQ {
+			if ui.settingsPopupOpen {
+				if ui.settingsEditMode {
+					return event
+				}
+				ui.closeSettingsPopup()
+				return nil
+			}
+			ui.showConfirmation("Are you sure you want to exit?", func() {
 				ui.app.Stop()
+			})
+			return nil
+		}
+
+		hasModal := false
+		if name, _ := ui.pages.GetFrontPage(); name == "confirmation" {
+			hasModal = true
+		}
+
+		if !ui.settingsPopupOpen && !ui.helpPopupOpen && !hasModal {
+			if event.Rune() == '/' {
+				ui.showSettingsPopup()
+				return nil
+			}
+			if event.Rune() == '?' {
+				ui.showHelpPopup()
 				return nil
 			}
 		}
+
 		// F-keys or Alt/Ctrl numbers to switch tabs
 		if event.Key() == tcell.KeyF1 {
 			ui.switchTab(0)
@@ -299,15 +375,17 @@ func (ui *UI) setupKeyboard() {
 			return nil
 		}
 		if event.Key() == tcell.KeyF4 {
-			ui.switchTab(3)
+			if !ui.settingsPopupOpen && !ui.helpPopupOpen {
+				ui.showSettingsPopup()
+			}
 			return nil
 		}
 		if event.Rune() == '[' {
-			ui.switchTab((ui.activeTab + 3) % 4)
+			ui.switchTab((ui.activeTab + 2) % 3)
 			return nil
 		}
 		if event.Rune() == ']' {
-			ui.switchTab((ui.activeTab + 1) % 4)
+			ui.switchTab((ui.activeTab + 1) % 3)
 			return nil
 		}
 
@@ -502,4 +580,41 @@ func (ui *UI) getSelectedUpdatePackages() []string {
 		}
 	}
 	return pkgs
+}
+
+
+
+func (ui *UI) showSettingsPopup() {
+	ui.settingsPopupOpen = true
+	ui.settingInputs[0].SetText(ui.conf.PackagesPath)
+	ui.settingInputs[1].SetText(ui.conf.PackagesFile)
+	ui.settingInputs[2].SetText(ui.conf.PacmanDBPath)
+	ui.settingInputs[3].SetText(ui.conf.PacmanConfigPath)
+	ui.settingInputs[4].SetText(ui.conf.InstallCommand)
+	ui.settingInputs[5].SetText(ui.conf.UninstallCommand)
+	ui.settingInputs[6].SetText(ui.conf.SysUpgradeCmd)
+	ui.settingInputs[7].SetText(strconv.Itoa(ui.conf.MaxResults))
+	ui.settingAurCb.SetChecked(ui.conf.DisableAur)
+	ui.settingHooksCb.SetChecked(ui.conf.RunUpdateHooks)
+	ui.updateSettingsDisplay()
+
+	ui.pages.ShowPage("settings")
+	ui.app.SetFocus(ui.settingsGrid)
+}
+
+func (ui *UI) closeSettingsPopup() {
+	ui.settingsPopupOpen = false
+	ui.pages.HidePage("settings")
+	ui.restoreFocusToActiveTab()
+}
+
+func (ui *UI) restoreFocusToActiveTab() {
+	switch ui.activeTab {
+	case 0:
+		ui.app.SetFocus(ui.searchField)
+	case 1:
+		ui.app.SetFocus(ui.updateTable)
+	case 2:
+		// manage tab has no interactive input fields to focus.
+	}
 }
