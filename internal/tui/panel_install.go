@@ -22,6 +22,10 @@ func (ui *UI) handleSearchChange(text string) {
 	term := strings.TrimSpace(text)
 	ui.lastSearchTerm = term
 
+	// Reset selection to the first item on search change
+	ui.pkgTable.Select(1, 0)
+	ui.pkgTable.ScrollToBeginning()
+
 	// Instantly update local search results
 	ui.performLocalSearch(term)
 
@@ -238,6 +242,11 @@ func (ui *UI) forceSearch(term string) {
 	}
 
 	ui.lastSearchTerm = term
+
+	// Reset selection to the first item on forced search
+	ui.pkgTable.Select(1, 0)
+	ui.pkgTable.ScrollToBeginning()
+
 	ui.performLocalSearch(term)
 
 	if ui.conf.DisableAur || term == "" {
@@ -322,15 +331,30 @@ func (ui *UI) renderPackageTable() {
 		ui.pkgTable.SetCell(row, 4, reputationCell)
 	}
 
+	var activeRow int
 	if selectedRow > 0 && selectedRow <= len(ui.shownPackages) {
-		ui.pkgTable.Select(selectedRow, 0)
+		activeRow = selectedRow
 	} else if len(ui.shownPackages) > 0 {
-		ui.pkgTable.ScrollToBeginning()
-		ui.pkgTable.Select(1, 0)
+		activeRow = 1
+	}
+
+	if activeRow > 0 {
+		ui.pkgTable.Select(activeRow, 0)
+		pkg := ui.shownPackages[activeRow-1]
+		ui.selectedPkg = &pkg
+		ui.loadPackageDetails(pkg)
+	} else {
+		ui.selectedPkg = nil
+		if ui.detailsView != nil {
+			ui.detailsView.Clear()
+		}
 	}
 }
 
 func (ui *UI) loadPackageDetails(pkg pkgmgr.Package) {
+	if ui.detailsView == nil {
+		return
+	}
 	ui.detailsView.Clear()
 	ui.detailsView.SetTitle(fmt.Sprintf(" Details: %s ", pkg.Name))
 

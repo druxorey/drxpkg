@@ -196,7 +196,9 @@ func (ui *UI) setupWidgets() {
 		}
 		if row <= 0 || row > len(ui.shownPackages) {
 			ui.selectedPkg = nil
-			ui.detailsView.Clear()
+			if ui.detailsView != nil {
+				ui.detailsView.Clear()
+			}
 			return
 		}
 		pkg := ui.shownPackages[row-1]
