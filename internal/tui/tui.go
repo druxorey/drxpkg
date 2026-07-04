@@ -48,10 +48,12 @@ type UI struct {
 	helpPopupOpen        bool
 
 	// Tab 1: Install Views
-	searchField *tview.InputField
-	pkgTable    *tview.Table
-	detailsView *tview.TextView
-	statusText  *tview.TextView
+	searchField      *tview.InputField
+	pkgTable         *tview.Table
+	detailsView      *tview.TextView
+	statusText       *tview.TextView
+	installRightFlex *tview.Flex
+	selectedTable    *tview.Table
 
 	// Tab 2: Update Views
 	updatePageFlex    *tview.Flex
@@ -183,6 +185,18 @@ func (ui *UI) setupWidgets() {
 		SetWordWrap(true)
 	ui.detailsView.SetBorder(true).SetTitle(" Details ")
 
+	ui.selectedTable = tview.NewTable().
+		SetSelectable(true, false).
+		SetFixed(1, 0)
+	ui.selectedTable.SetSelectedStyle(tcell.StyleDefault.Background(tcell.ColorBlue).Foreground(tcell.ColorWhite).Attributes(tcell.AttrBold))
+	ui.selectedTable.SetBorder(true).SetTitle(" Selected Packages (0) ")
+	ui.selectedTable.SetFocusFunc(func() {
+		ui.selectedTable.SetBorderColor(tcell.ColorBlue)
+	})
+	ui.selectedTable.SetBlurFunc(func() {
+		ui.selectedTable.SetBorderColor(tcell.ColorDefault)
+	})
+
 	ui.statusText = tview.NewTextView().
 		SetDynamicColors(true)
 
@@ -211,6 +225,7 @@ func (ui *UI) setupWidgets() {
 	ui.setupHelpPopup()
 }
 
+
 func (ui *UI) setupLayout() {
 	ui.pages = tview.NewPages()
 
@@ -219,9 +234,12 @@ func (ui *UI) setupLayout() {
 		AddItem(ui.searchField, 3, 0, true).
 		AddItem(ui.pkgTable, 0, 1, false)
 
+	ui.installRightFlex = tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(ui.detailsView, 0, 1, false)
+
 	installPage := tview.NewFlex().SetDirection(tview.FlexColumn).
 		AddItem(installFlex, 0, 1, true).
-		AddItem(ui.detailsView, 0, 1, false)
+		AddItem(ui.installRightFlex, 0, 1, false)
 
 	// Tab 3: Package Management Page
 	managePage := ui.setupManagePage()
@@ -403,6 +421,12 @@ func (ui *UI) setupKeyboard() {
 			ui.forceSearch(term)
 		case tcell.KeyTAB, tcell.KeyDown:
 			ui.app.SetFocus(ui.pkgTable)
+		case tcell.KeyBacktab:
+			if ui.installRightFlex != nil && ui.installRightFlex.GetItemCount() == 2 {
+				ui.app.SetFocus(ui.selectedTable)
+			} else {
+				ui.app.SetFocus(ui.pkgTable)
+			}
 		}
 	})
 
@@ -410,7 +434,8 @@ func (ui *UI) setupKeyboard() {
 	ui.pkgTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyRune {
 			r := event.Rune()
-			if r == 'g' {
+			switch r {
+			case 'g':
 				if ui.lastKeyWasG {
 					if len(ui.shownPackages) > 0 {
 						ui.pkgTable.ScrollToBeginning()
@@ -421,7 +446,7 @@ func (ui *UI) setupKeyboard() {
 					ui.lastKeyWasG = true
 				}
 				return nil
-			} else if r == 'G' {
+			case 'G':
 				if len(ui.shownPackages) > 0 {
 					ui.pkgTable.ScrollToEnd()
 					ui.pkgTable.Select(len(ui.shownPackages), 0)
@@ -433,6 +458,14 @@ func (ui *UI) setupKeyboard() {
 		ui.lastKeyWasG = false
 
 		if event.Key() == tcell.KeyTAB {
+			if ui.installRightFlex != nil && ui.installRightFlex.GetItemCount() == 2 {
+				ui.app.SetFocus(ui.selectedTable)
+			} else {
+				ui.app.SetFocus(ui.searchField)
+			}
+			return nil
+		}
+		if event.Key() == tcell.KeyBacktab {
 			ui.app.SetFocus(ui.searchField)
 			return nil
 		}
@@ -515,7 +548,43 @@ func (ui *UI) setupKeyboard() {
 		}
 		return event
 	})
+
+	ui.selectedTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyTAB {
+			ui.app.SetFocus(ui.searchField)
+			return nil
+		}
+		if event.Key() == tcell.KeyBacktab {
+			ui.app.SetFocus(ui.pkgTable)
+			return nil
+		}
+		if (event.Key() == tcell.KeyRune && event.Rune() == ' ') || event.Key() == tcell.KeyEnter {
+			row, _ := ui.selectedTable.GetSelection()
+			selectedPkgs := ui.getSelectedInstallPackages()
+			if row >= 0 && row < len(selectedPkgs) {
+				pkgName := selectedPkgs[row]
+				ui.selectedInstall[pkgName] = false
+
+				// Re-render package table to reflect the deselection
+				ui.renderPackageTable()
+
+				// If we still have packages left, update rendering and keep focus
+				selectedAfter := ui.getSelectedInstallPackages()
+				if len(selectedAfter) > 0 {
+					ui.renderSelectedTable(selectedAfter)
+					if row >= len(selectedAfter) {
+						ui.selectedTable.Select(len(selectedAfter)-1, 0)
+					} else {
+						ui.selectedTable.Select(row, 0)
+					}
+				}
+			}
+			return nil
+		}
+		return event
+	})
 }
+
 
 func (ui *UI) rebuildCache() {
 	ui.alpmMutex.Lock()

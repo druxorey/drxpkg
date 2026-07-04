@@ -349,7 +349,10 @@ func (ui *UI) renderPackageTable() {
 			ui.detailsView.Clear()
 		}
 	}
+
+	ui.updateInstallRightFlex()
 }
+
 
 func (ui *UI) loadPackageDetails(pkg pkgmgr.Package) {
 	if ui.detailsView == nil {
@@ -541,13 +544,60 @@ func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
 	})
 
 	_ = ui.reinitPacmanDbs()
-	if ui.activeTab == 0 {
+
+	switch ui.activeTab {
+	case 0:
 		ui.selectedInstall = make(map[string]bool)
 		if ui.lastSearchTerm != "" {
 			ui.forceSearch(ui.lastSearchTerm)
 		}
-	} else if ui.activeTab == 1 {
+	case 1:
 		ui.updatePackages = nil
 		ui.checkForUpdates()
+	}
+
+}
+
+
+func (ui *UI) updateInstallRightFlex() {
+	if ui.installRightFlex == nil || ui.selectedTable == nil {
+		return
+	}
+	selectedPkgs := ui.getSelectedInstallPackages()
+	if len(selectedPkgs) > 0 {
+		if ui.installRightFlex.GetItemCount() == 1 {
+			ui.installRightFlex.Clear()
+			ui.installRightFlex.AddItem(ui.detailsView, 0, 2, false)
+			ui.installRightFlex.AddItem(ui.selectedTable, 0, 1, false)
+		}
+		ui.renderSelectedTable(selectedPkgs)
+	} else {
+		if ui.installRightFlex.GetItemCount() == 2 {
+			ui.installRightFlex.Clear()
+			ui.installRightFlex.AddItem(ui.detailsView, 0, 1, false)
+			if ui.app != nil && ui.app.GetFocus() == ui.selectedTable {
+				ui.app.SetFocus(ui.pkgTable)
+			}
+		}
+	}
+}
+
+
+func (ui *UI) renderSelectedTable(selectedPkgs []string) {
+	if ui.selectedTable == nil {
+		return
+	}
+	ui.selectedTable.Clear()
+	for i, name := range selectedPkgs {
+		cell := tview.NewTableCell(name).SetTextColor(tcell.ColorDefault).SetExpansion(1)
+		ui.selectedTable.SetCell(i, 0, cell)
+	}
+	ui.selectedTable.SetTitle(fmt.Sprintf(" Selected Packages (%d) ", len(selectedPkgs)))
+
+	if len(selectedPkgs) > 0 {
+		row, _ := ui.selectedTable.GetSelection()
+		if row < 0 || row >= len(selectedPkgs) {
+			ui.selectedTable.Select(0, 0)
+		}
 	}
 }
