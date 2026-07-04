@@ -82,6 +82,7 @@ type UI struct {
 	isRendering     bool
 	statusMessage            string
 	confirmationFocusedIndex int
+	lastKeyWasG              bool
 }
 
 func New(conf *config.Settings) (*UI, error) {
@@ -407,6 +408,30 @@ func (ui *UI) setupKeyboard() {
 
 	// Table list captured
 	ui.pkgTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyRune {
+			r := event.Rune()
+			if r == 'g' {
+				if ui.lastKeyWasG {
+					if len(ui.shownPackages) > 0 {
+						ui.pkgTable.ScrollToBeginning()
+						ui.pkgTable.Select(1, 0)
+					}
+					ui.lastKeyWasG = false
+				} else {
+					ui.lastKeyWasG = true
+				}
+				return nil
+			} else if r == 'G' {
+				if len(ui.shownPackages) > 0 {
+					ui.pkgTable.ScrollToEnd()
+					ui.pkgTable.Select(len(ui.shownPackages), 0)
+				}
+				ui.lastKeyWasG = false
+				return nil
+			}
+		}
+		ui.lastKeyWasG = false
+
 		if event.Key() == tcell.KeyTAB {
 			ui.app.SetFocus(ui.searchField)
 			return nil
@@ -431,12 +456,26 @@ func (ui *UI) setupKeyboard() {
 			return nil
 		}
 		if event.Key() == tcell.KeyRune && event.Rune() == ' ' {
-			row, _ := ui.pkgTable.GetSelection()
-			if row > 0 && row <= len(ui.shownPackages) {
-				pkg := ui.shownPackages[row-1]
-				ui.selectedInstall[pkg.Name] = !ui.selectedInstall[pkg.Name]
+			if ui.inVisualMode {
+				minRow := min(ui.visualStartRow, ui.visualEndRow)
+				maxRow := max(ui.visualStartRow, ui.visualEndRow)
+				for r := minRow; r <= maxRow; r++ {
+					if r > 0 && r <= len(ui.shownPackages) {
+						name := ui.shownPackages[r-1].Name
+						ui.selectedInstall[name] = !ui.selectedInstall[name]
+					}
+				}
+				ui.inVisualMode = false
+				ui.updateStatusDisplay()
 				ui.renderPackageTable()
-				ui.pkgTable.Select(row, 0)
+			} else {
+				row, _ := ui.pkgTable.GetSelection()
+				if row > 0 && row <= len(ui.shownPackages) {
+					pkg := ui.shownPackages[row-1]
+					ui.selectedInstall[pkg.Name] = !ui.selectedInstall[pkg.Name]
+					ui.renderPackageTable()
+					ui.pkgTable.Select(row, 0)
+				}
 			}
 			return nil
 		}

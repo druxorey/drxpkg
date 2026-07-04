@@ -67,6 +67,31 @@ func (ui *UI) setupUpdatePage() {
 
 	ui.updateTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		row, _ := ui.updateTable.GetSelection()
+
+		if event.Key() == tcell.KeyRune {
+			r := event.Rune()
+			if r == 'g' {
+				if ui.lastKeyWasG {
+					if len(ui.updatePackages) > 0 {
+						ui.updateTable.ScrollToBeginning()
+						ui.updateTable.Select(1, 0)
+					}
+					ui.lastKeyWasG = false
+				} else {
+					ui.lastKeyWasG = true
+				}
+				return nil
+			} else if r == 'G' {
+				if len(ui.updatePackages) > 0 {
+					ui.updateTable.ScrollToEnd()
+					ui.updateTable.Select(len(ui.updatePackages), 0)
+				}
+				ui.lastKeyWasG = false
+				return nil
+			}
+		}
+		ui.lastKeyWasG = false
+
 		if event.Key() == tcell.KeyTAB {
 			ui.app.SetFocus(ui.updateDetails)
 			return nil
@@ -91,9 +116,24 @@ func (ui *UI) setupUpdatePage() {
 			return nil
 		}
 		if event.Key() == tcell.KeyRune && event.Rune() == ' ' {
-			if row > 0 && row <= len(ui.updatePackages) {
-				ui.togglePackageSelection(row - 1)
-				ui.updateTable.Select(row, 0)
+			if ui.inVisualMode {
+				minRow := min(ui.visualStartRow, ui.visualEndRow)
+				maxRow := max(ui.visualStartRow, ui.visualEndRow)
+				for r := minRow; r <= maxRow; r++ {
+					if r > 0 && r <= len(ui.updatePackages) {
+						if !ui.updatePackages[r-1].NotInAur {
+							ui.updatePackages[r-1].Selected = !ui.updatePackages[r-1].Selected
+						}
+					}
+				}
+				ui.inVisualMode = false
+				ui.updateStatusDisplay()
+				ui.renderUpdateTable()
+			} else {
+				if row > 0 && row <= len(ui.updatePackages) {
+					ui.togglePackageSelection(row - 1)
+					ui.updateTable.Select(row, 0)
+				}
 			}
 			return nil
 		}
@@ -101,22 +141,8 @@ func (ui *UI) setupUpdatePage() {
 			ui.toggleSelectAll()
 			return nil
 		}
-		if event.Key() == tcell.KeyRune && (event.Rune() == 'u' || event.Rune() == 'U') {
-			selectedPkgs := ui.getSelectedUpdatePackages()
-			if len(selectedPkgs) > 0 {
-				ui.promptUninstall(strings.Join(selectedPkgs, " "))
-			} else if row > 0 && row <= len(ui.updatePackages) {
-				ui.promptUninstall(ui.updatePackages[row-1].Name)
-			}
-			return nil
-		}
 		if event.Key() == tcell.KeyRune && (event.Rune() == 'i' || event.Rune() == 'I') {
-			selectedPkgs := ui.getSelectedUpdatePackages()
-			if len(selectedPkgs) > 0 {
-				ui.promptInstall(strings.Join(selectedPkgs, " "))
-			} else if row > 0 && row <= len(ui.updatePackages) {
-				ui.promptInstall(ui.updatePackages[row-1].Name)
-			}
+			ui.runUpgradeProcess()
 			return nil
 		}
 		if event.Key() == tcell.KeyEnter {
@@ -615,7 +641,7 @@ func (ui *UI) preloadUpdateDetails(pkg pkgmgr.UpdatePackage) {
 		fmt.Fprintf(&sb, "[blue]Source:[-] Not in AUR\n\n")
 		fmt.Fprintf(&sb, "[yellow]Warning:[-] Local-only package (not in AUR).\n")
 		fmt.Fprintf(&sb, "This package is installed locally but was not found in the AUR.\n")
-		fmt.Fprintf(&sb, "It will not receive updates. You can press [blue]'u'[-] to uninstall it.\n")
+		fmt.Fprintf(&sb, "It will not receive updates. You can uninstall it from the Install tab.\n")
 
 		ui.cacheMutex.Lock()
 		ui.updateDetailsCache[pkg.Name] = sb.String()

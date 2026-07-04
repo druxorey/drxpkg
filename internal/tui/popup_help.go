@@ -20,11 +20,16 @@ func (ui *UI) setupHelpPopup() {
   [green]v[-] / [green]V[-]        Toggle visual mode for range selection
   [green]i[-] / [green]I[-]        Install selected package(s)
   [green]u[-] / [green]U[-]        Uninstall selected package(s)
+  [green]gg[-]           Go to beginning of table
+  [green]G[-]            Go to end of table
 
 [yellow]Update Tab:[-]
   [green]Space[-]        Toggle update selection
   [green]a[-] / [green]A[-]        Toggle select all updates
-  [green]u[-] / [green]U[-]        Run system upgrade
+  [green]v[-] / [green]V[-]        Toggle visual mode for range selection
+  [green]i[-] / [green]I[-]        Run system upgrade (install updates)
+  [green]gg[-]           Go to beginning of table
+  [green]G[-]            Go to end of table
 
 [yellow]Settings Popup:[-]
   [green]Up[-]/[green]Down[-]/[green]TAB[-] Navigate settings fields
