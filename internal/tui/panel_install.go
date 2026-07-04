@@ -18,6 +18,7 @@ import (
 	"github.com/rivo/tview"
 )
 
+
 func (ui *UI) handleSearchChange(text string) {
 	term := strings.TrimSpace(text)
 	ui.lastSearchTerm = term
@@ -32,6 +33,7 @@ func (ui *UI) handleSearchChange(text string) {
 	// Schedule debounced remote AUR search
 	ui.scheduleAurSearch(term)
 }
+
 
 func (ui *UI) performLocalSearch(term string) {
 	if term == "" {
@@ -100,6 +102,7 @@ func (ui *UI) performLocalSearch(term string) {
 	}
 }
 
+
 func (ui *UI) scheduleAurSearch(term string) {
 	ui.searchMutex.Lock()
 	defer ui.searchMutex.Unlock()
@@ -125,6 +128,7 @@ func (ui *UI) scheduleAurSearch(term string) {
 		ui.runAurSearch(ctx, term)
 	})
 }
+
 
 func (ui *UI) runAurSearch(ctx context.Context, term string) {
 	ui.app.QueueUpdateDraw(func() {
@@ -227,6 +231,7 @@ func (ui *UI) runAurSearch(ctx context.Context, term string) {
 	})
 }
 
+
 func (ui *UI) forceSearch(term string) {
 	ui.searchMutex.Lock()
 	defer ui.searchMutex.Unlock()
@@ -259,6 +264,7 @@ func (ui *UI) forceSearch(term string) {
 	go ui.runAurSearch(ctx, term)
 }
 
+
 func (ui *UI) renderPackageTable() {
 	ui.isRendering = true
 	defer func() { ui.isRendering = false }()
@@ -269,10 +275,10 @@ func (ui *UI) renderPackageTable() {
 
 	// Header row
 	ui.pkgTable.SetCell(0, 0, tview.NewTableCell("").SetSelectable(false).SetMaxWidth(8))
-	ui.pkgTable.SetCell(0, 1, tview.NewTableCell("Package").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetExpansion(1))
-	ui.pkgTable.SetCell(0, 2, tview.NewTableCell("Source").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(12))
-	ui.pkgTable.SetCell(0, 3, tview.NewTableCell("Installed").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(10))
-	ui.pkgTable.SetCell(0, 4, tview.NewTableCell("Reputation").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(12))
+	ui.pkgTable.SetCell(0, 1, tview.NewTableCell("Package").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetExpansion(1))
+	ui.pkgTable.SetCell(0, 2, tview.NewTableCell("Source").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
+	ui.pkgTable.SetCell(0, 3, tview.NewTableCell("Installed").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(10))
+	ui.pkgTable.SetCell(0, 4, tview.NewTableCell("Reputation").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
 
 	for idx, p := range ui.shownPackages {
 		row := idx + 1
@@ -415,59 +421,49 @@ func (ui *UI) loadPackageDetails(pkg pkgmgr.Package) {
 	}()
 }
 
-func (ui *UI) installOrUninstallPackage(pkg pkgmgr.Package) {
-	cmdStr := ui.conf.InstallCommand
-	isInstall := true
-	if pkg.IsInstalled {
-		cmdStr = ui.conf.UninstallCommand
-		isInstall = false
+
+func (ui *UI) updateInstallRightFlex() {
+	if ui.installRightFlex == nil || ui.selectedTable == nil {
+		return
 	}
-
-	ui.app.Suspend(func() {
-		// Clean terminal screen using standard ANSI code
-		fmt.Print("\033[H\033[2J")
-
-		var fullCommand string
-		if strings.Contains(cmdStr, "{pkg}") {
-			fullCommand = strings.ReplaceAll(cmdStr, "{pkg}", pkg.Name)
-		} else {
-			fullCommand = cmdStr + " " + pkg.Name
+	selectedPkgs := ui.getSelectedInstallPackages()
+	if len(selectedPkgs) > 0 {
+		if ui.installRightFlex.GetItemCount() == 1 {
+			ui.installRightFlex.Clear()
+			ui.installRightFlex.AddItem(ui.detailsView, 0, 2, false)
+			ui.installRightFlex.AddItem(ui.selectedTable, 0, 1, false)
 		}
-
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/sh"
-		}
-
-		fmt.Printf("Running: %s\n\n", fullCommand)
-		cmd := exec.Command(shell, "-c", fullCommand)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		err := cmd.Run()
-		if err == nil {
-			if isInstall {
-				_ = pkglist.AddPackage(ui.conf.PackagesPath, ui.conf.PackagesFile, pkg.Name)
-				util.PrintSuccess("Package '%s' installed and added to %s.\n", pkg.Name, ui.conf.PackagesFile)
-			} else {
-				_ = pkglist.RemovePackage(ui.conf.PackagesPath, ui.conf.PackagesFile, pkg.Name)
-				util.PrintSuccess("Package '%s' uninstalled and removed from %s.\n", pkg.Name, ui.conf.PackagesFile)
+		ui.renderSelectedTable(selectedPkgs)
+	} else {
+		if ui.installRightFlex.GetItemCount() == 2 {
+			ui.installRightFlex.Clear()
+			ui.installRightFlex.AddItem(ui.detailsView, 0, 1, false)
+			if ui.app != nil && ui.app.GetFocus() == ui.selectedTable {
+				ui.app.SetFocus(ui.pkgTable)
 			}
-			fmt.Println("\nPress ENTER to return to drxpkg...")
-			_, _ = os.Stdin.Read(make([]byte, 1))
-		} else {
-			util.PrintError("Command failed: %v\nPress ENTER to return to drxpkg...", err)
-			_, _ = os.Stdin.Read(make([]byte, 1))
 		}
-	})
-
-	_ = ui.reinitPacmanDbs()
-	if ui.lastSearchTerm != "" {
-		ui.forceSearch(ui.lastSearchTerm)
 	}
 }
 
+
+func (ui *UI) renderSelectedTable(selectedPkgs []string) {
+	if ui.selectedTable == nil {
+		return
+	}
+	ui.selectedTable.Clear()
+	for i, name := range selectedPkgs {
+		cell := tview.NewTableCell(name).SetTextColor(tcell.ColorDefault).SetExpansion(1)
+		ui.selectedTable.SetCell(i, 0, cell)
+	}
+	ui.selectedTable.SetTitle(fmt.Sprintf(" Selected Packages (%d) ", len(selectedPkgs)))
+
+	if len(selectedPkgs) > 0 {
+		row, _ := ui.selectedTable.GetSelection()
+		if row < 0 || row >= len(selectedPkgs) {
+			ui.selectedTable.Select(0, 0)
+		}
+	}
+}
 
 
 func (ui *UI) promptInstall(pkgName string) {
@@ -483,6 +479,7 @@ func (ui *UI) promptInstall(pkgName string) {
 	})
 }
 
+
 func (ui *UI) promptUninstall(pkgName string) {
 	pkgs := strings.Fields(pkgName)
 	var message string
@@ -495,6 +492,7 @@ func (ui *UI) promptUninstall(pkgName string) {
 		ui.performInstallOrUninstall(pkgName, false)
 	})
 }
+
 
 func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
 	cmdStr := ui.conf.InstallCommand
@@ -554,50 +552,5 @@ func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
 	case 1:
 		ui.updatePackages = nil
 		ui.checkForUpdates()
-	}
-
-}
-
-
-func (ui *UI) updateInstallRightFlex() {
-	if ui.installRightFlex == nil || ui.selectedTable == nil {
-		return
-	}
-	selectedPkgs := ui.getSelectedInstallPackages()
-	if len(selectedPkgs) > 0 {
-		if ui.installRightFlex.GetItemCount() == 1 {
-			ui.installRightFlex.Clear()
-			ui.installRightFlex.AddItem(ui.detailsView, 0, 2, false)
-			ui.installRightFlex.AddItem(ui.selectedTable, 0, 1, false)
-		}
-		ui.renderSelectedTable(selectedPkgs)
-	} else {
-		if ui.installRightFlex.GetItemCount() == 2 {
-			ui.installRightFlex.Clear()
-			ui.installRightFlex.AddItem(ui.detailsView, 0, 1, false)
-			if ui.app != nil && ui.app.GetFocus() == ui.selectedTable {
-				ui.app.SetFocus(ui.pkgTable)
-			}
-		}
-	}
-}
-
-
-func (ui *UI) renderSelectedTable(selectedPkgs []string) {
-	if ui.selectedTable == nil {
-		return
-	}
-	ui.selectedTable.Clear()
-	for i, name := range selectedPkgs {
-		cell := tview.NewTableCell(name).SetTextColor(tcell.ColorDefault).SetExpansion(1)
-		ui.selectedTable.SetCell(i, 0, cell)
-	}
-	ui.selectedTable.SetTitle(fmt.Sprintf(" Selected Packages (%d) ", len(selectedPkgs)))
-
-	if len(selectedPkgs) > 0 {
-		row, _ := ui.selectedTable.GetSelection()
-		if row < 0 || row >= len(selectedPkgs) {
-			ui.selectedTable.Select(0, 0)
-		}
 	}
 }

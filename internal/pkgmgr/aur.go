@@ -10,10 +10,12 @@ import (
 	"sort"
 	"strings"
 	"time"
+
 	"github.com/druxorey/drxpkg/internal/util"
 )
 
 const DefaultAurRPCURL = "https://aur.archlinux.org/rpc"
+
 
 func SearchAur(ctx context.Context, aurURL, term string, timeoutMs int, maxResults int) ([]Package, error) {
 	packages := []Package{}
@@ -69,6 +71,7 @@ func SearchAur(ctx context.Context, aurURL, term string, timeoutMs int, maxResul
 
 	return packages, nil
 }
+
 
 func InfoAur(aurURL string, timeoutMs int, pkgs ...string) SearchResults {
 	if aurURL == "" {

@@ -20,32 +20,22 @@ import (
 	"github.com/rivo/tview"
 )
 
+
 func (ui *UI) setupUpdatePage() {
 	ui.updateTable = tview.NewTable().
 		SetSelectable(true, false).
 		SetFixed(1, 0)
-	ui.updateTable.SetSelectedStyle(tcell.StyleDefault.Background(tcell.ColorBlue).Foreground(tcell.ColorWhite).Attributes(tcell.AttrBold))
-	ui.updateTable.SetBorder(true).SetBorderColor(tcell.ColorDefault).SetTitle(" Updates ")
+	ui.updateTable.SetSelectedStyle(tcell.StyleDefault.Background(ui.theme.PrimaryColor).Foreground(ui.theme.SelectedTextColor).Attributes(tcell.AttrBold))
+	ui.updateTable.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Updates ")
 
 	ui.updateDetails = tview.NewTextView().
 		SetDynamicColors(true).
 		SetWrap(true).
 		SetWordWrap(true)
-	ui.updateDetails.SetBorder(true).SetBorderColor(tcell.ColorDefault).SetTitle(" Details / PKGBUILD Changes ")
+	ui.updateDetails.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Details / PKGBUILD Changes ")
 
-	ui.updateTable.SetFocusFunc(func() {
-		ui.updateTable.SetBorderColor(tcell.ColorBlue)
-	})
-	ui.updateTable.SetBlurFunc(func() {
-		ui.updateTable.SetBorderColor(tcell.ColorDefault)
-	})
-
-	ui.updateDetails.SetFocusFunc(func() {
-		ui.updateDetails.SetBorderColor(tcell.ColorBlue)
-	})
-	ui.updateDetails.SetBlurFunc(func() {
-		ui.updateDetails.SetBorderColor(tcell.ColorDefault)
-	})
+	ui.setupFocusBorder(ui.updateTable)
+	ui.setupFocusBorder(ui.updateDetails)
 
 	ui.updateTable.SetSelectionChangedFunc(func(row, column int) {
 		if ui.isRendering {
@@ -180,36 +170,6 @@ func (ui *UI) setupUpdatePage() {
 		AddItem(ui.updateDetails, 0, 1, false)
 }
 
-func (ui *UI) togglePackageSelection(index int) {
-	if index < 0 || index >= len(ui.updatePackages) {
-		return
-	}
-	if ui.updatePackages[index].NotInAur {
-		return
-	}
-	ui.updatePackages[index].Selected = !ui.updatePackages[index].Selected
-	ui.renderUpdateTable()
-}
-
-func (ui *UI) toggleSelectAll() {
-	allSelected := true
-	for _, p := range ui.updatePackages {
-		if p.NotInAur {
-			continue
-		}
-		if !p.Selected {
-			allSelected = false
-			break
-		}
-	}
-	for i := range ui.updatePackages {
-		if ui.updatePackages[i].NotInAur {
-			continue
-		}
-		ui.updatePackages[i].Selected = !allSelected
-	}
-	ui.renderUpdateTable()
-}
 
 func (ui *UI) renderUpdateTable() {
 	ui.isRendering = true
@@ -221,11 +181,11 @@ func (ui *UI) renderUpdateTable() {
 
 	// Header row
 	ui.updateTable.SetCell(0, 0, tview.NewTableCell("").SetSelectable(false).SetMaxWidth(8))
-	ui.updateTable.SetCell(0, 1, tview.NewTableCell("Package").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetExpansion(1))
-	ui.updateTable.SetCell(0, 2, tview.NewTableCell("Current").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(20))
-	ui.updateTable.SetCell(0, 3, tview.NewTableCell("").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(4))
-	ui.updateTable.SetCell(0, 4, tview.NewTableCell("New").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(20))
-	ui.updateTable.SetCell(0, 5, tview.NewTableCell("Source").SetTextColor(tcell.ColorBlue).SetSelectable(false).SetMaxWidth(12))
+	ui.updateTable.SetCell(0, 1, tview.NewTableCell("Package").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetExpansion(1))
+	ui.updateTable.SetCell(0, 2, tview.NewTableCell("Current").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(20))
+	ui.updateTable.SetCell(0, 3, tview.NewTableCell("").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(4))
+	ui.updateTable.SetCell(0, 4, tview.NewTableCell("New").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(20))
+	ui.updateTable.SetCell(0, 5, tview.NewTableCell("Source").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
 
 	for idx, p := range ui.updatePackages {
 		row := idx + 1
@@ -309,40 +269,39 @@ func (ui *UI) renderUpdateTable() {
 	}
 }
 
-func (ui *UI) getPackageSource(pkgName string) string {
-	ui.alpmMutex.Lock()
-	defer ui.alpmMutex.Unlock()
-	if ui.alpmHandle == nil {
-		return "AUR"
+
+func (ui *UI) togglePackageSelection(index int) {
+	if index < 0 || index >= len(ui.updatePackages) {
+		return
 	}
-	dbs, err := ui.alpmHandle.SyncDBs()
-	if err != nil {
-		return "AUR"
+	if ui.updatePackages[index].NotInAur {
+		return
 	}
-	for _, db := range dbs.Slice() {
-		if db.Pkg(pkgName) != nil {
-			return db.Name()
-		}
-	}
-	return "AUR"
+	ui.updatePackages[index].Selected = !ui.updatePackages[index].Selected
+	ui.renderUpdateTable()
 }
 
-func (ui *UI) countUpdatesInfo(pkgs []pkgmgr.UpdatePackage) (totalUpdates, aurUpdates, outOfDate, notInAur int) {
-	for _, p := range pkgs {
+
+func (ui *UI) toggleSelectAll() {
+	allSelected := true
+	for _, p := range ui.updatePackages {
 		if p.NotInAur {
-			notInAur++
-		} else {
-			totalUpdates++
-			if p.Source == "AUR" {
-				aurUpdates++
-			}
-			if p.OutOfDate {
-				outOfDate++
-			}
+			continue
+		}
+		if !p.Selected {
+			allSelected = false
+			break
 		}
 	}
-	return
+	for i := range ui.updatePackages {
+		if ui.updatePackages[i].NotInAur {
+			continue
+		}
+		ui.updatePackages[i].Selected = !allSelected
+	}
+	ui.renderUpdateTable()
 }
+
 
 func (ui *UI) checkForUpdates() {
 	if ui.updatePackages != nil {
@@ -371,6 +330,7 @@ func (ui *UI) checkForUpdates() {
 
 	ui.backgroundUpdateCheck()
 }
+
 
 func (ui *UI) backgroundUpdateCheck() {
 	ui.setStatus("Checking for updates...")
@@ -601,15 +561,43 @@ func (ui *UI) backgroundUpdateCheck() {
 	}()
 }
 
-func countAur(pkgs []pkgmgr.UpdatePackage) int {
-	count := 0
+
+func (ui *UI) countUpdatesInfo(pkgs []pkgmgr.UpdatePackage) (totalUpdates, aurUpdates, outOfDate, notInAur int) {
 	for _, p := range pkgs {
-		if p.Source == "AUR" {
-			count++
+		if p.NotInAur {
+			notInAur++
+		} else {
+			totalUpdates++
+			if p.Source == "AUR" {
+				aurUpdates++
+			}
+			if p.OutOfDate {
+				outOfDate++
+			}
 		}
 	}
-	return count
+	return
 }
+
+
+func (ui *UI) getPackageSource(pkgName string) string {
+	ui.alpmMutex.Lock()
+	defer ui.alpmMutex.Unlock()
+	if ui.alpmHandle == nil {
+		return "AUR"
+	}
+	dbs, err := ui.alpmHandle.SyncDBs()
+	if err != nil {
+		return "AUR"
+	}
+	for _, db := range dbs.Slice() {
+		if db.Pkg(pkgName) != nil {
+			return db.Name()
+		}
+	}
+	return "AUR"
+}
+
 
 func (ui *UI) loadUpdateDetails(pkg pkgmgr.UpdatePackage) {
 	ui.cacheMutex.RLock()
@@ -625,6 +613,7 @@ func (ui *UI) loadUpdateDetails(pkg pkgmgr.UpdatePackage) {
 	ui.updateDetails.SetText("Fetching details...")
 	go ui.preloadUpdateDetails(pkg)
 }
+
 
 func (ui *UI) preloadUpdateDetails(pkg pkgmgr.UpdatePackage) {
 	ui.cacheMutex.RLock()
@@ -769,6 +758,7 @@ func (ui *UI) preloadUpdateDetails(pkg pkgmgr.UpdatePackage) {
 	})
 }
 
+
 func getPkgbuildContentWithTimeout(url string, timeout time.Duration) (string, error) {
 	client := http.Client{Timeout: timeout}
 	resp, err := client.Get(url)
@@ -782,6 +772,7 @@ func getPkgbuildContentWithTimeout(url string, timeout time.Duration) (string, e
 	}
 	return string(b), nil
 }
+
 
 func runDiff(localContent, remoteContent string) (string, error) {
 	tmpLocal, err := os.CreateTemp("", "drxpkg-local-")
@@ -811,6 +802,7 @@ func runDiff(localContent, remoteContent string) (string, error) {
 	return string(output), nil
 }
 
+
 func formatDiff(diffText string) string {
 	lines := strings.Split(diffText, "\n")
 	for i, line := range lines {
@@ -829,6 +821,7 @@ func formatDiff(diffText string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
 
 func (ui *UI) runUpgradeProcess() {
 	var selectedCount int
@@ -916,6 +909,7 @@ func (ui *UI) runUpgradeProcess() {
 	ui.checkForUpdates()
 }
 
+
 func (ui *UI) runUpdateHooks() {
 	if !ui.conf.RunUpdateHooks {
 		fmt.Printf("\nUpdate hooks are disabled in settings.\n")
@@ -972,6 +966,7 @@ func (ui *UI) runUpdateHooks() {
 		}
 	}
 }
+
 
 func hasFlag(args []string, flag string) bool {
 	return slices.Contains(args, flag)

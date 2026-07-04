@@ -9,6 +9,7 @@ import (
 	"github.com/rivo/tview"
 )
 
+
 func (ui *UI) setupSettingsPanel() {
 	// Initialize inputs
 	ui.settingInputs = make([]*tview.InputField, 8)
@@ -23,7 +24,7 @@ func (ui *UI) setupSettingsPanel() {
 
 	for i, input := range ui.settingInputs {
 		idx := i
-		input.SetBorder(true).SetBorderColor(tcell.ColorGray)
+		input.SetBorder(true).SetBorderColor(ui.theme.NeutralGrayColor)
 		input.SetBackgroundColor(tcell.ColorBlack)
 		input.SetFieldBackgroundColor(tcell.ColorBlack)
 		input.SetFieldTextColor(tcell.ColorDefault)
@@ -131,8 +132,8 @@ func (ui *UI) setupSettingsPanel() {
 		SetBorders(1, 1, 0, 0, 3, 3)
 	settingsFrame.SetBorder(true).
 		SetTitle(" Settings ").
-		SetBorderColor(tcell.ColorBlue).
-		SetTitleColor(tcell.ColorBlue)
+		SetBorderColor(ui.theme.PrimaryColor).
+		SetTitleColor(ui.theme.PrimaryColor)
 	settingsFrame.SetBackgroundColor(tcell.ColorBlack)
 
 	// Center the settingsFrame using a grid
@@ -213,60 +214,62 @@ func (ui *UI) setupSettingsPanel() {
 	ui.updateSettingsDisplay()
 }
 
+
 func (ui *UI) updateSettingsDisplay() {
 	// Reset all inputs border color
 	for i, input := range ui.settingInputs {
 		if i == ui.settingsFocusedIndex {
 			if ui.settingsEditMode {
-				input.SetBorderColor(tcell.ColorGreen)
+				input.SetBorderColor(ui.theme.EditingBorderColor)
 			} else {
-				input.SetBorderColor(tcell.ColorBlue)
+				input.SetBorderColor(ui.theme.FocusedBorderColor)
 			}
 		} else {
-			input.SetBorderColor(tcell.ColorGray)
+			input.SetBorderColor(ui.theme.NeutralGrayColor)
 		}
 	}
 
 	// Disable AUR Checkbox styling
 	if ui.settingsFocusedIndex == 8 {
-		ui.settingAurCb.SetFieldBackgroundColor(tcell.ColorYellow)
-		ui.settingAurCb.SetFieldTextColor(tcell.ColorBlack)
+		ui.settingAurCb.SetFieldBackgroundColor(ui.theme.SettingsFieldFocusedBg)
+		ui.settingAurCb.SetFieldTextColor(ui.theme.SettingsFieldFocusedFg)
 	} else {
 		ui.settingAurCb.SetFieldBackgroundColor(tcell.ColorBlack)
-		ui.settingAurCb.SetFieldTextColor(tcell.ColorWhite)
+		ui.settingAurCb.SetFieldTextColor(ui.theme.SelectedTextColor)
 	}
 
 	// Run Update Hooks Checkbox styling
 	if ui.settingsFocusedIndex == 9 {
-		ui.settingHooksCb.SetFieldBackgroundColor(tcell.ColorYellow)
-		ui.settingHooksCb.SetFieldTextColor(tcell.ColorBlack)
+		ui.settingHooksCb.SetFieldBackgroundColor(ui.theme.SettingsFieldFocusedBg)
+		ui.settingHooksCb.SetFieldTextColor(ui.theme.SettingsFieldFocusedFg)
 	} else {
 		ui.settingHooksCb.SetFieldBackgroundColor(tcell.ColorBlack)
-		ui.settingHooksCb.SetFieldTextColor(tcell.ColorWhite)
+		ui.settingHooksCb.SetFieldTextColor(ui.theme.SelectedTextColor)
 	}
 
 	// Save button styling
 	if ui.settingsFocusedIndex == 10 {
 		ui.btnSave.SetTextColor(tcell.ColorDefault)
-		ui.btnSave.SetBackgroundColor(tcell.ColorBlue)
+		ui.btnSave.SetBackgroundColor(ui.theme.PrimaryColor)
 		ui.btnSave.SetText("Apply & Save")
 	} else {
-		ui.btnSave.SetTextColor(tcell.ColorWhite)
-		ui.btnSave.SetBackgroundColor(tcell.ColorGray)
+		ui.btnSave.SetTextColor(ui.theme.SelectedTextColor)
+		ui.btnSave.SetBackgroundColor(ui.theme.NeutralGrayColor)
 		ui.btnSave.SetText("Apply & Save")
 	}
 
 	// Defaults button styling
 	if ui.settingsFocusedIndex == 11 {
 		ui.btnDefaults.SetTextColor(tcell.ColorDefault)
-		ui.btnDefaults.SetBackgroundColor(tcell.ColorBlue)
+		ui.btnDefaults.SetBackgroundColor(ui.theme.PrimaryColor)
 		ui.btnDefaults.SetText("Defaults")
 	} else {
-		ui.btnDefaults.SetTextColor(tcell.ColorWhite)
-		ui.btnDefaults.SetBackgroundColor(tcell.ColorGray)
+		ui.btnDefaults.SetTextColor(ui.theme.SelectedTextColor)
+		ui.btnDefaults.SetBackgroundColor(ui.theme.NeutralGrayColor)
 		ui.btnDefaults.SetText("Defaults")
 	}
 }
+
 
 func (ui *UI) handleSettingsSelect() {
 	if ui.settingsFocusedIndex >= 0 && ui.settingsFocusedIndex < 8 {
@@ -285,6 +288,7 @@ func (ui *UI) handleSettingsSelect() {
 		ui.loadSettingsDefaults()
 	}
 }
+
 
 func (ui *UI) saveSettingsAction() {
 	ui.conf.PackagesPath = ui.settingInputs[0].GetText()
@@ -311,6 +315,7 @@ func (ui *UI) saveSettingsAction() {
 	}
 	_ = ui.reinitPacmanDbs()
 }
+
 
 func (ui *UI) loadSettingsDefaults() {
 	ui.conf = config.Defaults()

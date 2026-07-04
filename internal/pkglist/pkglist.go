@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
 	"github.com/druxorey/drxpkg/internal/util"
 )
 
@@ -18,11 +19,13 @@ var Categories = []string{"server", "minimal", "desktop", "new"}
 
 type PackageMap map[string][]string
 
+
 func NewPackageMap() PackageMap {
 	pm := make(PackageMap)
 	pm["new_packages"] = []string{}
 	return pm
 }
+
 
 func parseBashArrayName(line string) (string, bool) {
 	parts := strings.SplitN(line, "=(", 2)
@@ -46,6 +49,7 @@ func parseBashArrayName(line string) (string, bool) {
 	}
 	return name, true
 }
+
 
 func GetFilePath(customPath string, fileName string) (string, error) {
 	if fileName == "" {
@@ -77,6 +81,7 @@ func GetFilePath(customPath string, fileName string) (string, error) {
 
 	return filepath.Join(customPath, fileName), nil
 }
+
 
 func Load(customPath string, fileName string) (PackageMap, error) {
 	packages := NewPackageMap()
@@ -127,6 +132,7 @@ func Load(customPath string, fileName string) (PackageMap, error) {
 	return packages, scanner.Err()
 }
 
+
 func getOriginalArrayOrder(filePath string) ([]string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -156,6 +162,7 @@ func getOriginalArrayOrder(filePath string) ([]string, error) {
 	}
 	return order, scanner.Err()
 }
+
 
 func Save(customPath string, fileName string, packages PackageMap) error {
 	filePath, err := GetFilePath(customPath, fileName)
@@ -236,9 +243,10 @@ func Save(customPath string, fileName string, packages PackageMap) error {
 	return writer.Flush()
 }
 
+
 func FindPackageLocation(pkgName string, allPackages PackageMap) (string, string, bool) {
 	suffixes := []string{"", "-git", "-bin"}
-	
+
 	var keys []string
 	for k := range allPackages {
 		keys = append(keys, k)
@@ -265,6 +273,7 @@ func FindPackageLocation(pkgName string, allPackages PackageMap) (string, string
 	return "", "", false
 }
 
+
 func AddPackage(customPath string, fileName string, pkg string) error {
 	allPackages, err := Load(customPath, fileName)
 	if err != nil {
@@ -280,6 +289,7 @@ func AddPackage(customPath string, fileName string, pkg string) error {
 	return Save(customPath, fileName, allPackages)
 }
 
+
 func RemovePackage(customPath string, fileName string, pkg string) error {
 	allPackages, err := Load(customPath, fileName)
 	if err != nil {
@@ -294,6 +304,7 @@ func RemovePackage(customPath string, fileName string, pkg string) error {
 	allPackages[cat] = removeValue(allPackages[cat], fullPkgName)
 	return Save(customPath, fileName, allPackages)
 }
+
 
 func removeValue(slice []string, value string) []string {
 	var result []string

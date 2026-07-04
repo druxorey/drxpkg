@@ -20,6 +20,7 @@ type Settings struct {
 	RunUpdateHooks   bool   `json:"run_update_hooks"`
 }
 
+
 func Defaults() *Settings {
 	return &Settings{
 		PackagesPath:     "$HOME/.local/share/",
@@ -35,6 +36,7 @@ func Defaults() *Settings {
 	}
 }
 
+
 func GetConfigDir() (string, error) {
 	userConfigDir, err := os.UserConfigDir()
 	if err != nil {
@@ -42,6 +44,7 @@ func GetConfigDir() (string, error) {
 	}
 	return filepath.Join(userConfigDir, "drxpkg"), nil
 }
+
 
 func Load() (*Settings, error) {
 	dir, err := GetConfigDir()
@@ -62,6 +65,7 @@ func Load() (*Settings, error) {
 	}
 	return s, nil
 }
+
 
 func (s *Settings) Save() error {
 	dir, err := GetConfigDir()

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+
 	"github.com/druxorey/drxpkg/internal/util"
 )
 
@@ -27,12 +28,14 @@ var gitlabRepl = []RegexReplace{
 	{repl: `unix-tree`, match: regexp.MustCompile(`^tree$`)},
 }
 
+
 func GetPkgbuildURL(source, base string) string {
 	if source != "AUR" {
 		return fmt.Sprintf(URLRepoPkgbuild, encodePackageGitlabURL(base))
 	}
 	return fmt.Sprintf(URLAurPkgbuild, base)
 }
+
 
 func GetPkgbuildContent(url string) (string, error) {
 	resp, err := http.Get(url)
@@ -53,10 +56,10 @@ func GetPkgbuildContent(url string) (string, error) {
 	return string(b), nil
 }
 
+
 func encodePackageGitlabURL(pkgname string) string {
 	for _, regex := range gitlabRepl {
 		pkgname = regex.match.ReplaceAllString(pkgname, regex.repl)
 	}
 	return pkgname
 }
-

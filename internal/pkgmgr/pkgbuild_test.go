@@ -5,6 +5,7 @@ import (
 	"testing"
 )
 
+
 func TestGetPkgbuildUrl(t *testing.T) {
 	tests := []struct {
 		source   string
@@ -23,6 +24,7 @@ func TestGetPkgbuildUrl(t *testing.T) {
 		}
 	}
 }
+
 
 func TestGitlabUrlEncoding(t *testing.T) {
 	tests := []struct {

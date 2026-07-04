@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+
 func TestSearchAur(t *testing.T) {
 	// Mock HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,6 +62,7 @@ func TestSearchAur(t *testing.T) {
 		t.Errorf("expected my-pkg-beta second, got %s", pkgs[1].Name)
 	}
 }
+
 
 func TestInfoAur(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

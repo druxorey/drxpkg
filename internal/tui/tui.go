@@ -25,7 +25,39 @@ type cachedPkg struct {
 	DescriptionLower string
 }
 
+// Theme defines the visual color palette and styling configuration for the TUI components.
+type Theme struct {
+	PrimaryColor tcell.Color               // Main accent color used for focused borders, highlights, and headers
+	UnfocusedBorderColor tcell.Color       // Color applied to primitive borders when they do not have keyboard focus
+	FocusedBorderColor tcell.Color         // Color applied to primitive borders when the widget is actively focused
+	EditingBorderColor tcell.Color         // Color used for active input fields when the user is in text editing mode
+	NeutralGrayColor tcell.Color           // Used for secondary labels, inactive buttons, or disabled indicators
+	SelectedTextColor tcell.Color          // Foreground color used for highlighted/selected text in lists and tables
+	SettingsFieldFocusedBg tcell.Color     // Background color of checkboxes/fields when focused in the settings menu
+	SettingsFieldFocusedFg tcell.Color     // Text color of checkboxes/fields when focused in the settings menu
+}
+
+// DefaultTheme represents the standard blue-accented dark theme of the application.
+var DefaultTheme = Theme{
+	PrimaryColor:           tcell.ColorBlue,
+	UnfocusedBorderColor:   tcell.ColorDefault,
+	FocusedBorderColor:     tcell.ColorBlue,
+	EditingBorderColor:     tcell.ColorGreen,
+	NeutralGrayColor:       tcell.ColorGray,
+	SelectedTextColor:      tcell.ColorWhite,
+	SettingsFieldFocusedBg: tcell.ColorYellow,
+	SettingsFieldFocusedFg: tcell.ColorBlack,
+}
+
+// FocusBorderable defines an interface for primitives that change border color on focus/blur.
+type FocusBorderable interface {
+	SetFocusFunc(func()) *tview.Box
+	SetBlurFunc(func()) *tview.Box
+	SetBorderColor(tcell.Color) *tview.Box
+}
+
 type UI struct {
+	theme      Theme
 	conf       *config.Settings
 	app        *tview.Application
 	alpmHandle *alpm.Handle
@@ -87,25 +119,27 @@ type UI struct {
 	lastKeyWasG              bool
 }
 
-func New(conf *config.Settings) (*UI, error) {
-	// Configure global tview styles to inherit terminal transparency
-	tview.Styles.PrimitiveBackgroundColor = tcell.ColorDefault
-	tview.Styles.ContrastBackgroundColor = tcell.ColorDefault
-	tview.Styles.MoreContrastBackgroundColor = tcell.ColorDefault
-	tview.Styles.BorderColor = tcell.ColorBlue
-	tview.Styles.TitleColor = tcell.ColorBlue
-	tview.Styles.GraphicsColor = tcell.ColorBlue
-	tview.Styles.PrimaryTextColor = tcell.ColorDefault
-	tview.Styles.SecondaryTextColor = tcell.ColorDefault
-	tview.Styles.TertiaryTextColor = tcell.ColorDefault
 
+func New(conf *config.Settings) (*UI, error) {
 	ui := &UI{
+		theme:              DefaultTheme,
 		conf:               conf,
 		app:                tview.NewApplication(),
 		activeTab:          0,
 		updateDetailsCache: make(map[string]string),
 		selectedInstall:    make(map[string]bool),
 	}
+
+	// Configure global tview styles to inherit terminal transparency
+	tview.Styles.PrimitiveBackgroundColor = tcell.ColorDefault
+	tview.Styles.ContrastBackgroundColor = tcell.ColorDefault
+	tview.Styles.MoreContrastBackgroundColor = tcell.ColorDefault
+	tview.Styles.BorderColor = ui.theme.PrimaryColor
+	tview.Styles.TitleColor = ui.theme.PrimaryColor
+	tview.Styles.GraphicsColor = ui.theme.PrimaryColor
+	tview.Styles.PrimaryTextColor = tcell.ColorDefault
+	tview.Styles.SecondaryTextColor = tcell.ColorDefault
+	tview.Styles.TertiaryTextColor = tcell.ColorDefault
 
 	var err error
 	ui.alpmHandle, err = pkgmgr.InitPacmanDbs(conf.PacmanDBPath, conf.PacmanConfigPath)
@@ -123,11 +157,13 @@ func New(conf *config.Settings) (*UI, error) {
 	return ui, nil
 }
 
+
 func (ui *UI) Start() error {
 	ui.drawTabBar()
 	ui.app.SetRoot(ui.grid, true).EnableMouse(true)
 	return ui.app.Run()
 }
+
 
 func (ui *UI) reinitPacmanDbs() error {
 	ui.alpmMutex.Lock()
@@ -144,6 +180,65 @@ func (ui *UI) reinitPacmanDbs() error {
 	return err
 }
 
+
+func (ui *UI) rebuildCache() {
+	ui.alpmMutex.Lock()
+	defer ui.alpmMutex.Unlock()
+
+	if ui.alpmHandle == nil {
+		return
+	}
+
+	dbs, err := ui.alpmHandle.SyncDBs()
+	if err != nil {
+		return
+	}
+
+	local, err := ui.alpmHandle.LocalDB()
+	if err != nil {
+		return
+	}
+
+	var cache []cachedPkg
+
+	// Sync DBs
+	for _, db := range dbs.Slice() {
+		for _, pkg := range db.PkgCache().Slice() {
+			cache = append(cache, cachedPkg{
+				Package: pkgmgr.Package{
+					Name:         pkg.Name(),
+					Source:       db.Name(),
+					IsInstalled:  local.Pkg(pkg.Name()) != nil,
+					LastModified: int(pkg.BuildDate().Unix()),
+					Popularity:   math.MaxFloat64,
+				},
+				Description:      pkg.Description(),
+				NameLower:        strings.ToLower(pkg.Name()),
+				DescriptionLower: strings.ToLower(pkg.Description()),
+			})
+		}
+	}
+
+	// Local DB (only those not already in sync or representing local modifications)
+	for _, pkg := range local.PkgCache().Slice() {
+		cache = append(cache, cachedPkg{
+			Package: pkgmgr.Package{
+				Name:         pkg.Name(),
+				Source:       local.Name(),
+				IsInstalled:  true,
+				LastModified: int(pkg.BuildDate().Unix()),
+				Popularity:   math.MaxFloat64,
+			},
+			Description:      pkg.Description(),
+			NameLower:        strings.ToLower(pkg.Name()),
+			DescriptionLower: strings.ToLower(pkg.Description()),
+		})
+	}
+
+	ui.pkgsCache = cache
+}
+
+
 func (ui *UI) setupWidgets() {
 	// Tab bar
 	ui.tabBar = tview.NewTextView().
@@ -153,31 +248,21 @@ func (ui *UI) setupWidgets() {
 	// Tab 1 Widgets
 	ui.searchField = tview.NewInputField().
 		SetLabel("Search: ").
-		SetLabelColor(tcell.ColorBlue).
+		SetLabelColor(ui.theme.PrimaryColor).
 		SetFieldTextColor(tcell.ColorDefault).
 		SetFieldBackgroundColor(tcell.ColorDefault)
-	ui.searchField.SetBorder(true).SetBorderColor(tcell.ColorDefault)
+	ui.searchField.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor)
 	ui.searchField.SetChangedFunc(func(text string) {
 		ui.handleSearchChange(text)
 	})
-	ui.searchField.SetFocusFunc(func() {
-		ui.searchField.SetBorderColor(tcell.ColorBlue)
-	})
-	ui.searchField.SetBlurFunc(func() {
-		ui.searchField.SetBorderColor(tcell.ColorDefault)
-	})
+	ui.setupFocusBorder(ui.searchField)
 
 	ui.pkgTable = tview.NewTable().
 		SetSelectable(true, false).
 		SetFixed(1, 0)
-	ui.pkgTable.SetSelectedStyle(tcell.StyleDefault.Background(tcell.ColorBlue).Foreground(tcell.ColorWhite).Attributes(tcell.AttrBold))
-	ui.pkgTable.SetBorder(true).SetBorderColor(tcell.ColorDefault)
-	ui.pkgTable.SetFocusFunc(func() {
-		ui.pkgTable.SetBorderColor(tcell.ColorBlue)
-	})
-	ui.pkgTable.SetBlurFunc(func() {
-		ui.pkgTable.SetBorderColor(tcell.ColorDefault)
-	})
+	ui.pkgTable.SetSelectedStyle(tcell.StyleDefault.Background(ui.theme.PrimaryColor).Foreground(ui.theme.SelectedTextColor).Attributes(tcell.AttrBold))
+	ui.pkgTable.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor)
+	ui.setupFocusBorder(ui.pkgTable)
 
 	ui.detailsView = tview.NewTextView().
 		SetDynamicColors(true).
@@ -188,14 +273,9 @@ func (ui *UI) setupWidgets() {
 	ui.selectedTable = tview.NewTable().
 		SetSelectable(true, false).
 		SetFixed(1, 0)
-	ui.selectedTable.SetSelectedStyle(tcell.StyleDefault.Background(tcell.ColorBlue).Foreground(tcell.ColorWhite).Attributes(tcell.AttrBold))
+	ui.selectedTable.SetSelectedStyle(tcell.StyleDefault.Background(ui.theme.PrimaryColor).Foreground(ui.theme.SelectedTextColor).Attributes(tcell.AttrBold))
 	ui.selectedTable.SetBorder(true).SetTitle(" Selected Packages (0) ")
-	ui.selectedTable.SetFocusFunc(func() {
-		ui.selectedTable.SetBorderColor(tcell.ColorBlue)
-	})
-	ui.selectedTable.SetBlurFunc(func() {
-		ui.selectedTable.SetBorderColor(tcell.ColorDefault)
-	})
+	ui.setupFocusBorder(ui.selectedTable)
 
 	ui.statusText = tview.NewTextView().
 		SetDynamicColors(true)
@@ -260,6 +340,17 @@ func (ui *UI) setupLayout() {
 		AddItem(ui.statusText, 2, 0, 1, 1, 0, 0, false)
 }
 
+// setupFocusBorder binds focus and blur handlers to change the border color to the focus color.
+func (ui *UI) setupFocusBorder(widget FocusBorderable) {
+	widget.SetFocusFunc(func() {
+		widget.SetBorderColor(ui.theme.FocusedBorderColor)
+	})
+	widget.SetBlurFunc(func() {
+		widget.SetBorderColor(ui.theme.UnfocusedBorderColor)
+	})
+}
+
+
 func (ui *UI) drawTabBar() {
 	tabs := []string{"[1] Install", "[2] Update", "[3] Manage"}
 	var styledTabs []string
@@ -272,6 +363,7 @@ func (ui *UI) drawTabBar() {
 	}
 	ui.tabBar.SetText(strings.Join(styledTabs, "   "))
 }
+
 
 func (ui *UI) switchTab(tabIndex int) {
 	if tabIndex < 0 || tabIndex > 2 {
@@ -292,6 +384,19 @@ func (ui *UI) switchTab(tabIndex int) {
 		ui.pages.SwitchToPage("manage")
 	}
 }
+
+
+func (ui *UI) restoreFocusToActiveTab() {
+	switch ui.activeTab {
+	case 0:
+		ui.app.SetFocus(ui.searchField)
+	case 1:
+		ui.app.SetFocus(ui.updateTable)
+	case 2:
+		// manage tab has no interactive input fields to focus.
+	}
+}
+
 
 func (ui *UI) setupKeyboard() {
 	// Global captures
@@ -372,7 +477,7 @@ func (ui *UI) setupKeyboard() {
 		}
 
 		if !ui.settingsPopupOpen && !ui.helpPopupOpen && !hasModal {
-			if event.Rune() == '/' {
+			if event.Rune() == 's' {
 				ui.showSettingsPopup()
 				return nil
 			}
@@ -586,114 +691,6 @@ func (ui *UI) setupKeyboard() {
 }
 
 
-func (ui *UI) rebuildCache() {
-	ui.alpmMutex.Lock()
-	defer ui.alpmMutex.Unlock()
-
-	if ui.alpmHandle == nil {
-		return
-	}
-
-	dbs, err := ui.alpmHandle.SyncDBs()
-	if err != nil {
-		return
-	}
-
-	local, err := ui.alpmHandle.LocalDB()
-	if err != nil {
-		return
-	}
-
-	var cache []cachedPkg
-
-	// Sync DBs
-	for _, db := range dbs.Slice() {
-		for _, pkg := range db.PkgCache().Slice() {
-			cache = append(cache, cachedPkg{
-				Package: pkgmgr.Package{
-					Name:         pkg.Name(),
-					Source:       db.Name(),
-					IsInstalled:  local.Pkg(pkg.Name()) != nil,
-					LastModified: int(pkg.BuildDate().Unix()),
-					Popularity:   math.MaxFloat64,
-				},
-				Description:      pkg.Description(),
-				NameLower:        strings.ToLower(pkg.Name()),
-				DescriptionLower: strings.ToLower(pkg.Description()),
-			})
-		}
-	}
-
-	// Local DB (only those not already in sync or representing local modifications)
-	for _, pkg := range local.PkgCache().Slice() {
-		cache = append(cache, cachedPkg{
-			Package: pkgmgr.Package{
-				Name:         pkg.Name(),
-				Source:       local.Name(),
-				IsInstalled:  true,
-				LastModified: int(pkg.BuildDate().Unix()),
-				Popularity:   math.MaxFloat64,
-			},
-			Description:      pkg.Description(),
-			NameLower:        strings.ToLower(pkg.Name()),
-			DescriptionLower: strings.ToLower(pkg.Description()),
-		})
-	}
-
-	ui.pkgsCache = cache
-}
-
-func (ui *UI) setStatus(msg string) {
-	ui.statusMessage = msg
-	ui.updateStatusDisplay()
-}
-
-func (ui *UI) updateStatusDisplay() {
-	prefix := ""
-	if ui.inVisualMode {
-		prefix = "[yellow::b]SELECT MODE[-] "
-	}
-	ui.statusText.SetText(prefix + ui.statusMessage)
-}
-
-func getSourceColor(source string) tcell.Color {
-	switch strings.ToLower(source) {
-	case "core":
-		return tcell.ColorRed
-	case "extra":
-		return tcell.ColorGreen
-	case "multilib":
-		return tcell.ColorYellow
-	case "aur":
-		return tcell.ColorBlue
-	default:
-		return tcell.ColorDefault
-	}
-}
-
-func (ui *UI) getSelectedInstallPackages() []string {
-	var pkgs []string
-	for name, selected := range ui.selectedInstall {
-		if selected {
-			pkgs = append(pkgs, name)
-		}
-	}
-	sort.Strings(pkgs)
-	return pkgs
-}
-
-func (ui *UI) getSelectedUpdatePackages() []string {
-	var pkgs []string
-	for _, p := range ui.updatePackages {
-		if p.Selected && !p.NotInAur {
-			pkgs = append(pkgs, p.Name)
-		}
-	}
-	return pkgs
-}
-
-
-
 func (ui *UI) showSettingsPopup() {
 	ui.settingsPopupOpen = true
 	ui.settingInputs[0].SetText(ui.conf.PackagesPath)
@@ -712,19 +709,52 @@ func (ui *UI) showSettingsPopup() {
 	ui.app.SetFocus(ui.settingsGrid)
 }
 
+
 func (ui *UI) closeSettingsPopup() {
 	ui.settingsPopupOpen = false
 	ui.pages.HidePage("settings")
 	ui.restoreFocusToActiveTab()
 }
 
-func (ui *UI) restoreFocusToActiveTab() {
-	switch ui.activeTab {
-	case 0:
-		ui.app.SetFocus(ui.searchField)
-	case 1:
-		ui.app.SetFocus(ui.updateTable)
-	case 2:
-		// manage tab has no interactive input fields to focus.
+
+func (ui *UI) setStatus(msg string) {
+	ui.statusMessage = msg
+	ui.updateStatusDisplay()
+}
+
+
+func (ui *UI) updateStatusDisplay() {
+	prefix := ""
+	if ui.inVisualMode {
+		prefix = "[yellow::b]SELECT MODE[-] "
 	}
+	ui.statusText.SetText(prefix + ui.statusMessage)
+}
+
+
+func getSourceColor(source string) tcell.Color {
+	switch strings.ToLower(source) {
+	case "core":
+		return tcell.ColorRed
+	case "extra":
+		return tcell.ColorGreen
+	case "multilib":
+		return tcell.ColorYellow
+	case "aur":
+		return tcell.ColorBlue
+	default:
+		return tcell.ColorDefault
+	}
+}
+
+
+func (ui *UI) getSelectedInstallPackages() []string {
+	var pkgs []string
+	for name, selected := range ui.selectedInstall {
+		if selected {
+			pkgs = append(pkgs, name)
+		}
+	}
+	sort.Strings(pkgs)
+	return pkgs
 }

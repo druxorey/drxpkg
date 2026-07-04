@@ -10,6 +10,7 @@ import (
 	pconf "github.com/Morganamilo/go-pacmanconf"
 )
 
+
 func InitPacmanDbs(dbPath, confPath string) (*alpm.Handle, error) {
 	h, err := alpm.Initialize("/", dbPath)
 	if err != nil {
@@ -34,6 +35,7 @@ func InitPacmanDbs(dbPath, confPath string) (*alpm.Handle, error) {
 
 	return h, nil
 }
+
 
 func SearchRepos(h *alpm.Handle, term string, maxResults int) ([]Package, []Package, error) {
 	packages := []Package{}
@@ -83,6 +85,7 @@ func SearchRepos(h *alpm.Handle, term string, maxResults int) ([]Package, []Pack
 	return packages, installed, nil
 }
 
+
 func IsPackageInstalled(h *alpm.Handle, pkg string) bool {
 	if h == nil {
 		return false
@@ -93,6 +96,7 @@ func IsPackageInstalled(h *alpm.Handle, pkg string) bool {
 	}
 	return local.Pkg(pkg) != nil
 }
+
 
 func InfoPacman(h *alpm.Handle, pkgs ...string) SearchResults {
 	r := SearchResults{
@@ -185,6 +189,7 @@ func InfoPacman(h *alpm.Handle, pkgs ...string) SearchResults {
 	AddLocalSatisfiers(h, r.Results...)
 	return r
 }
+
 
 func AddLocalSatisfiers(h *alpm.Handle, pkgs ...InfoRecord) {
 	if h == nil {

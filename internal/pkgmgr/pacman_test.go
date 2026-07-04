@@ -5,6 +5,7 @@ import (
 	"testing"
 )
 
+
 func TestInitPacmanDbsInvalidPath(t *testing.T) {
 	// Initialize with invalid paths and expect errors
 	handle, err := InitPacmanDbs("/nonexistent/db", "/nonexistent/pacman.conf")
@@ -15,6 +16,7 @@ func TestInitPacmanDbsInvalidPath(t *testing.T) {
 		t.Fatalf("expected error when initializing with invalid paths, but got nil")
 	}
 }
+
 
 func TestPacmanNilHandle(t *testing.T) {
 	// Test behavior of ALPM wrapper functions under a nil handle

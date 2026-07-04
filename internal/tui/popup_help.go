@@ -5,10 +5,11 @@ import (
 	"github.com/rivo/tview"
 )
 
+
 func (ui *UI) setupHelpPopup() {
 	helpText := `[yellow]Global Shortcuts:[-]
   [green]ESC[-]          Exit application / Close active popup
-  [green]/[-]            Open Settings popup
+  [green]s[-]            Open Settings popup
   [green]?[-]            Open Help popup
   [green][[-], [green]][-]        Switch between tabs
   [green]F1[-] - [green]F3[-]      Switch tab directly
@@ -45,8 +46,8 @@ func (ui *UI) setupHelpPopup() {
 		SetBorders(1, 1, 0, 0, 2, 2)
 	helpFrame.SetBorder(true).
 		SetTitle(" Keyboard Shortcuts ").
-		SetBorderColor(tcell.ColorBlue).
-		SetTitleColor(tcell.ColorBlue)
+		SetBorderColor(ui.theme.PrimaryColor).
+		SetTitleColor(ui.theme.PrimaryColor)
 	helpFrame.SetBackgroundColor(tcell.ColorBlack)
 
 	ui.helpGrid = tview.NewGrid().
@@ -63,11 +64,13 @@ func (ui *UI) setupHelpPopup() {
 	})
 }
 
+
 func (ui *UI) showHelpPopup() {
 	ui.helpPopupOpen = true
 	ui.pages.ShowPage("help")
 	ui.app.SetFocus(ui.helpGrid)
 }
+
 
 func (ui *UI) closeHelpPopup() {
 	ui.helpPopupOpen = false

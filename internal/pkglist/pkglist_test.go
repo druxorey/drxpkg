@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+
 func TestPkglistLoadSave(t *testing.T) {
 	tempDir := t.TempDir()
 
@@ -92,6 +93,7 @@ func TestPkglistLoadSave(t *testing.T) {
 	}
 }
 
+
 func slicesContains(slice []string, val string) bool {
 	for _, s := range slice {
 		if s == val {
@@ -100,6 +102,7 @@ func slicesContains(slice []string, val string) bool {
 	}
 	return false
 }
+
 
 func TestPkglistArrayOrder(t *testing.T) {
 	tempDir := t.TempDir()

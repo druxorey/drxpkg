@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+
 // Helper function to sort packages with the same logic as UI.performSearch
 func sortPackages(pkgs []Package, term string) []Package {
 	var filtered []Package
@@ -42,6 +43,7 @@ func sortPackages(pkgs []Package, term string) []Package {
 
 	return filtered
 }
+
 
 func TestPopularApplicationsSorting(t *testing.T) {
 	// Mock database of popular Linux packages (mix of official and AUR)
@@ -165,6 +167,7 @@ func TestPopularApplicationsSorting(t *testing.T) {
 	})
 }
 
+
 func TestGetAurScore(t *testing.T) {
 	term := "chrome"
 
@@ -193,6 +196,7 @@ func TestGetAurScore(t *testing.T) {
 		t.Errorf("expected scorePrefixLow (%f) to be higher than scoreSubLow (%f)", scorePrefixLow, scoreSubLow)
 	}
 }
+
 
 func TestAurSorting(t *testing.T) {
 	term := "chrome"

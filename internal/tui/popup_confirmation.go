@@ -20,8 +20,8 @@ func (ui *UI) showConfirmation(message string, onConfirm func()) {
 		})
 	modal.SetBackgroundColor(tcell.ColorBlack)
 	modal.SetTextColor(tcell.ColorDefault)
-	modal.SetButtonBackgroundColor(tcell.ColorWhite)
-	modal.SetButtonTextColor(tcell.ColorBlue)
+	modal.SetButtonBackgroundColor(ui.theme.SelectedTextColor)
+	modal.SetButtonTextColor(ui.theme.PrimaryColor)
 
 	ui.pages.AddPage("confirmation", modal, true, true)
 }
