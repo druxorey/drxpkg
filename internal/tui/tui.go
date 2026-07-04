@@ -80,12 +80,13 @@ type UI struct {
 	helpPopupOpen        bool
 
 	// Tab 1: Install Views
-	searchField      *tview.InputField
-	pkgTable         *tview.Table
-	detailsView      *tview.TextView
-	statusText       *tview.TextView
-	installRightFlex *tview.Flex
-	selectedTable    *tview.Table
+	searchField         *tview.InputField
+	pkgTable            *tview.Table
+	detailsView         *tview.TextView
+	statusText          *tview.TextView
+	installRightFlex    *tview.Flex
+	selectedTable       *tview.Table
+	installDetailsCache map[string]string
 
 	// Tab 2: Update Views
 	updatePageFlex    *tview.Flex
@@ -122,12 +123,13 @@ type UI struct {
 
 func New(conf *config.Settings) (*UI, error) {
 	ui := &UI{
-		theme:              DefaultTheme,
-		conf:               conf,
-		app:                tview.NewApplication(),
-		activeTab:          0,
-		updateDetailsCache: make(map[string]string),
-		selectedInstall:    make(map[string]bool),
+		theme:               DefaultTheme,
+		conf:                conf,
+		app:                 tview.NewApplication(),
+		activeTab:           0,
+		updateDetailsCache:  make(map[string]string),
+		installDetailsCache: make(map[string]string),
+		selectedInstall:     make(map[string]bool),
 	}
 
 	// Configure global tview styles to inherit terminal transparency
@@ -268,7 +270,8 @@ func (ui *UI) setupWidgets() {
 		SetDynamicColors(true).
 		SetWrap(true).
 		SetWordWrap(true)
-	ui.detailsView.SetBorder(true).SetTitle(" Details ")
+	ui.detailsView.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Details ")
+	ui.setupFocusBorder(ui.detailsView)
 
 	ui.selectedTable = tview.NewTable().
 		SetSelectable(true, false).
@@ -477,7 +480,7 @@ func (ui *UI) setupKeyboard() {
 		}
 
 		if !ui.settingsPopupOpen && !ui.helpPopupOpen && !hasModal {
-			if event.Rune() == 's' {
+			if event.Rune() == '.' {
 				ui.showSettingsPopup()
 				return nil
 			}
@@ -530,7 +533,7 @@ func (ui *UI) setupKeyboard() {
 			if ui.installRightFlex != nil && ui.installRightFlex.GetItemCount() == 2 {
 				ui.app.SetFocus(ui.selectedTable)
 			} else {
-				ui.app.SetFocus(ui.pkgTable)
+				ui.app.SetFocus(ui.detailsView)
 			}
 		}
 	})
@@ -563,11 +566,7 @@ func (ui *UI) setupKeyboard() {
 		ui.lastKeyWasG = false
 
 		if event.Key() == tcell.KeyTAB {
-			if ui.installRightFlex != nil && ui.installRightFlex.GetItemCount() == 2 {
-				ui.app.SetFocus(ui.selectedTable)
-			} else {
-				ui.app.SetFocus(ui.searchField)
-			}
+			ui.app.SetFocus(ui.detailsView)
 			return nil
 		}
 		if event.Key() == tcell.KeyBacktab {
@@ -660,7 +659,7 @@ func (ui *UI) setupKeyboard() {
 			return nil
 		}
 		if event.Key() == tcell.KeyBacktab {
-			ui.app.SetFocus(ui.pkgTable)
+			ui.app.SetFocus(ui.detailsView)
 			return nil
 		}
 		if (event.Key() == tcell.KeyRune && event.Rune() == ' ') || event.Key() == tcell.KeyEnter {
@@ -684,6 +683,22 @@ func (ui *UI) setupKeyboard() {
 					}
 				}
 			}
+			return nil
+		}
+		return event
+	})
+
+	ui.detailsView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyTAB {
+			if ui.installRightFlex != nil && ui.installRightFlex.GetItemCount() == 2 {
+				ui.app.SetFocus(ui.selectedTable)
+			} else {
+				ui.app.SetFocus(ui.searchField)
+			}
+			return nil
+		}
+		if event.Key() == tcell.KeyBacktab {
+			ui.app.SetFocus(ui.pkgTable)
 			return nil
 		}
 		return event
@@ -735,13 +750,27 @@ func (ui *UI) updateStatusDisplay() {
 func getSourceColor(source string) tcell.Color {
 	switch strings.ToLower(source) {
 	case "core":
+		return tcell.ColorMaroon
+	case "cachyos-core-v3":
+		return tcell.ColorRed
+	case "cachyos-core-v4":
 		return tcell.ColorRed
 	case "extra":
 		return tcell.ColorGreen
+	case "cachyos-extra-v3":
+		return tcell.ColorLime
+	case "cachyos-extra-v4":
+		return tcell.ColorLime
 	case "multilib":
 		return tcell.ColorYellow
 	case "aur":
-		return tcell.ColorBlue
+		return tcell.ColorTeal
+	case "cachyos":
+		return tcell.ColorPurple
+	case "cachyos-v3":
+		return tcell.ColorPurple
+	case "cachyos-v4":
+		return tcell.ColorPurple
 	default:
 		return tcell.ColorDefault
 	}

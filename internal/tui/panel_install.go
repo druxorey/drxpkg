@@ -276,9 +276,9 @@ func (ui *UI) renderPackageTable() {
 	// Header row
 	ui.pkgTable.SetCell(0, 0, tview.NewTableCell("").SetSelectable(false).SetMaxWidth(8))
 	ui.pkgTable.SetCell(0, 1, tview.NewTableCell("Package").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetExpansion(1))
-	ui.pkgTable.SetCell(0, 2, tview.NewTableCell("Source").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
-	ui.pkgTable.SetCell(0, 3, tview.NewTableCell("Installed").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(10))
-	ui.pkgTable.SetCell(0, 4, tview.NewTableCell("Reputation").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
+	ui.pkgTable.SetCell(0, 2, tview.NewTableCell("Source   ").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
+	ui.pkgTable.SetCell(0, 3, tview.NewTableCell("Inst.").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(10))
+	ui.pkgTable.SetCell(0, 4, tview.NewTableCell("Votes").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
 
 	for idx, p := range ui.shownPackages {
 		row := idx + 1
@@ -310,7 +310,7 @@ func (ui *UI) renderPackageTable() {
 		if p.IsInstalled {
 			installedStr = "Yes"
 			installedCell.SetText(installedStr).
-				SetStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Attributes(tcell.AttrBold))
+				SetStyle(tcell.StyleDefault.Foreground(tcell.ColorDefault))
 		} else {
 			installedCell.SetTextColor(tcell.ColorGray)
 		}
@@ -365,58 +365,32 @@ func (ui *UI) loadPackageDetails(pkg pkgmgr.Package) {
 		return
 	}
 	ui.detailsView.Clear()
-	ui.detailsView.SetTitle(fmt.Sprintf(" Details: %s ", pkg.Name))
+	ui.detailsView.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(fmt.Sprintf(" Details: %s ", pkg.Name))
+
+	ui.cacheMutex.RLock()
+	cachedText, exists := ui.installDetailsCache[pkg.Name]
+	ui.cacheMutex.RUnlock()
+
+	if exists {
+		ui.detailsView.SetText(cachedText)
+		ui.detailsView.ScrollToBeginning()
+		return
+	}
+
+	ui.detailsView.SetText("Fetching details...")
 
 	go func() {
-		var info pkgmgr.SearchResults
-		if pkg.Source == "AUR" {
-			info = pkgmgr.InfoAur("", 5000, pkg.Name)
-		} else {
-			ui.alpmMutex.Lock()
-			info = pkgmgr.InfoPacman(ui.alpmHandle, pkg.Name)
-			ui.alpmMutex.Unlock()
-		}
+		details := ui.FetchAndBuildDetails(pkg.Name, pkg.Source)
+
+		ui.cacheMutex.Lock()
+		ui.installDetailsCache[pkg.Name] = details
+		ui.cacheMutex.Unlock()
 
 		ui.app.QueueUpdateDraw(func() {
-			if len(info.Results) == 0 {
-				ui.detailsView.SetText("[red]Error fetching details")
-				return
+			if ui.selectedPkg != nil && ui.selectedPkg.Name == pkg.Name {
+				ui.detailsView.SetText(details)
+				ui.detailsView.ScrollToBeginning()
 			}
-
-			record := info.Results[0]
-			fields := []struct {
-				label string
-				value string
-			}{
-				{"Description", record.Description},
-				{"Version", record.Version},
-				{"Local Ver", record.LocalVersion},
-				{"Source", record.Source},
-				{"Architecture", record.Architecture},
-				{"URL", record.URL},
-				{"Licenses", strings.Join(record.License, ", ")},
-				{"Maintainer", record.Maintainer},
-			}
-
-			var sb strings.Builder
-			for _, f := range fields {
-				if f.value == "" {
-					continue
-				}
-				if f.label == "Description" {
-					fmt.Fprintf(&sb, "[blue]%s:[-]\n%s\n\n", f.label, f.value)
-				} else {
-					fmt.Fprintf(&sb, "[blue]%s:[-] %s\n", f.label, f.value)
-				}
-			}
-
-			// Dependencies
-			if len(record.Depends) > 0 {
-				fmt.Fprintf(&sb, "\n[blue]Dependencies:[-]\n%s\n", strings.Join(record.Depends, ", "))
-			}
-
-			ui.detailsView.SetText(sb.String())
-			ui.detailsView.ScrollToBeginning()
 		})
 	}()
 }

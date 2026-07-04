@@ -9,7 +9,7 @@ import (
 func (ui *UI) setupHelpPopup() {
 	helpText := `[yellow]Global Shortcuts:[-]
   [green]ESC[-]          Exit application / Close active popup
-  [green]s[-]            Open Settings popup
+  [green].[-]            Open Settings popup
   [green]?[-]            Open Help popup
   [green][[-], [green]][-]        Switch between tabs
   [green]F1[-] - [green]F3[-]      Switch tab directly

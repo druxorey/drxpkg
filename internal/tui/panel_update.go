@@ -3,8 +3,6 @@ package tui
 
 import (
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,7 +30,7 @@ func (ui *UI) setupUpdatePage() {
 		SetDynamicColors(true).
 		SetWrap(true).
 		SetWordWrap(true)
-	ui.updateDetails.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Details / PKGBUILD Changes ")
+	ui.updateDetails.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Details ")
 
 	ui.setupFocusBorder(ui.updateTable)
 	ui.setupFocusBorder(ui.updateDetails)
@@ -60,7 +58,8 @@ func (ui *UI) setupUpdatePage() {
 
 		if event.Key() == tcell.KeyRune {
 			r := event.Rune()
-			if r == 'g' {
+			switch r {
+			case 'g':
 				if ui.lastKeyWasG {
 					if len(ui.updatePackages) > 0 {
 						ui.updateTable.ScrollToBeginning()
@@ -71,7 +70,7 @@ func (ui *UI) setupUpdatePage() {
 					ui.lastKeyWasG = true
 				}
 				return nil
-			} else if r == 'G' {
+			case 'G':
 				if len(ui.updatePackages) > 0 {
 					ui.updateTable.ScrollToEnd()
 					ui.updateTable.Select(len(ui.updatePackages), 0)
@@ -645,181 +644,18 @@ func (ui *UI) preloadUpdateDetails(pkg pkgmgr.UpdatePackage) {
 		return
 	}
 
-	var info pkgmgr.SearchResults
-	if pkg.Source == "AUR" {
-		info = pkgmgr.InfoAur("", 5000, pkg.Name)
-	} else {
-		ui.alpmMutex.Lock()
-		info = pkgmgr.InfoPacman(ui.alpmHandle, pkg.Name)
-		ui.alpmMutex.Unlock()
-	}
-
-	var pkgBase string
-	if len(info.Results) > 0 {
-		pkgBase = info.Results[0].PackageBase
-	}
-	if pkgBase == "" {
-		pkgBase = pkg.Name
-	}
-
-	var localPKGBUILD string
-	var localPath string
-	var remotePKGBUILD string
-
-	if pkg.Source == "AUR" {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			localPath = filepath.Join(home, ".cache/yay", pkgBase, "PKGBUILD")
-			data, err := os.ReadFile(localPath)
-			if err == nil {
-				localPKGBUILD = string(data)
-			}
-		}
-	}
-
-	// Fetch remote PKGBUILD
-	remoteURL := pkgmgr.GetPkgbuildURL(pkg.Source, pkgBase)
-	if remoteURL != "" {
-		remotePKGBUILD, _ = getPkgbuildContentWithTimeout(remoteURL, 5*time.Second)
-	}
-
-	var sb strings.Builder
-	if pkg.OutOfDate {
-		fmt.Fprintf(&sb, "[red]------------------------------------------------------------------[-]\n")
-		fmt.Fprintf(&sb, "[red]WARNING:[-] Flagged OUT OF DATE in the AUR.\n")
-		fmt.Fprintf(&sb, "It is recommended to avoid updating this package or uninstall it.\n")
-		fmt.Fprintf(&sb, "[red]------------------------------------------------------------------[-]\n\n")
-	}
-	if len(info.Results) > 0 {
-		record := info.Results[0]
-		fields := []struct {
-			label string
-			value string
-		}{
-			{"Description", record.Description},
-			{"Version", record.Version},
-			{"Local Ver", record.LocalVersion},
-			{"Source", record.Source},
-			{"Architecture", record.Architecture},
-			{"URL", record.URL},
-			{"Licenses", strings.Join(record.License, ", ")},
-			{"Maintainer", record.Maintainer},
-		}
-
-		for _, f := range fields {
-			if f.value == "" {
-				continue
-			}
-			if f.label == "Description" {
-				fmt.Fprintf(&sb, "[blue]%s:[-]\n%s\n\n", f.label, f.value)
-			} else {
-				fmt.Fprintf(&sb, "[blue]%s:[-] %s\n", f.label, f.value)
-			}
-		}
-	} else {
-		fmt.Fprintf(&sb, "[blue]Package:[-] %s\n", pkg.Name)
-		fmt.Fprintf(&sb, "[blue]Current Version:[-] %s\n", pkg.LocalVersion)
-		fmt.Fprintf(&sb, "[blue]New Version:[-] %s\n", pkg.NewVersion)
-		fmt.Fprintf(&sb, "[blue]Source:[-] %s\n\n", pkg.Source)
-	}
-
-	if pkg.Source == "AUR" {
-		fmt.Fprintf(&sb, "\n[yellow]----------------- PKGBUILD Diff -----------------[-]\n")
-		if remotePKGBUILD == "" {
-			fmt.Fprintf(&sb, "[red]Failed to fetch remote PKGBUILD from AUR cgit.[-]\n")
-		} else if localPKGBUILD == "" {
-			fmt.Fprintf(&sb, "%s", formatDiff(remotePKGBUILD))
-		} else {
-			diffOut, err := runDiff(localPKGBUILD, remotePKGBUILD)
-			if err != nil || diffOut == "" {
-				fmt.Fprintf(&sb, "%s", formatDiff(remotePKGBUILD))
-			} else {
-				fmt.Fprintf(&sb, "%s", formatDiff(diffOut))
-			}
-		}
-	} else {
-		if remotePKGBUILD != "" {
-			fmt.Fprintf(&sb, "\n[yellow]----------------- Remote PKGBUILD -----------------[-]\n")
-			fmt.Fprintf(&sb, "%s", formatDiff(remotePKGBUILD))
-		} else {
-			fmt.Fprintf(&sb, "\n[gray]No PKGBUILD diff/content available for repository packages.[-]\n")
-		}
-	}
+	details := ui.FetchAndBuildDetails(pkg.Name, pkg.Source)
 
 	ui.cacheMutex.Lock()
-	ui.updateDetailsCache[pkg.Name] = sb.String()
+	ui.updateDetailsCache[pkg.Name] = details
 	ui.cacheMutex.Unlock()
 
 	ui.app.QueueUpdateDraw(func() {
 		if ui.selectedUpdate != nil && ui.selectedUpdate.Name == pkg.Name {
-			ui.updateDetails.SetText(sb.String())
+			ui.updateDetails.SetText(details)
 			ui.updateDetails.ScrollToBeginning()
 		}
 	})
-}
-
-
-func getPkgbuildContentWithTimeout(url string, timeout time.Duration) (string, error) {
-	client := http.Client{Timeout: timeout}
-	resp, err := client.Get(url)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
-
-func runDiff(localContent, remoteContent string) (string, error) {
-	tmpLocal, err := os.CreateTemp("", "drxpkg-local-")
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(tmpLocal.Name())
-	defer tmpLocal.Close()
-
-	if _, err := tmpLocal.WriteString(localContent); err != nil {
-		return "", err
-	}
-
-	tmpRemote, err := os.CreateTemp("", "drxpkg-remote-")
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(tmpRemote.Name())
-	defer tmpRemote.Close()
-
-	if _, err := tmpRemote.WriteString(remoteContent); err != nil {
-		return "", err
-	}
-
-	cmd := exec.Command("diff", "-u", tmpLocal.Name(), tmpRemote.Name())
-	output, _ := cmd.CombinedOutput()
-	return string(output), nil
-}
-
-
-func formatDiff(diffText string) string {
-	lines := strings.Split(diffText, "\n")
-	for i, line := range lines {
-		escaped := strings.ReplaceAll(line, "[", "[[")
-		if strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++") {
-			lines[i] = "[yellow]" + escaped + "[-]"
-		} else if strings.HasPrefix(line, "@@") {
-			lines[i] = "[cyan]" + escaped + "[-]"
-		} else if strings.HasPrefix(line, "-") {
-			lines[i] = "[red]" + escaped + "[-]"
-		} else if strings.HasPrefix(line, "+") {
-			lines[i] = "[green]" + escaped + "[-]"
-		} else {
-			lines[i] = escaped
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 
