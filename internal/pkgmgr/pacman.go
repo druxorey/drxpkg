@@ -227,6 +227,6 @@ func AddLocalSatisfiers(h *alpm.Handle, pkgs ...InfoRecord) {
 				satisfiers = append(satisfiers, sat)
 			}
 		}
-		pkgs[i].DepsAndSatisfiers = satisfiers
+		pkgs[i].DepencenciesAndSatisfiers = satisfiers
 	}
 }

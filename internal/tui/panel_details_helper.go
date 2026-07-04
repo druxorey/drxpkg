@@ -72,30 +72,15 @@ func runDiff(localContent, remoteContent string) (string, error) {
 	return string(output), nil
 }
 
-func formatDiff(diffText string) string {
-	lines := strings.Split(diffText, "\n")
-	for i, line := range lines {
-		escaped := strings.ReplaceAll(line, "[", "[[")
-		if strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++") {
-			lines[i] = "[yellow]" + escaped + "[-]"
-		} else if strings.HasPrefix(line, "@@") {
-			lines[i] = "[cyan]" + escaped + "[-]"
-		} else if strings.HasPrefix(line, "-") {
-			lines[i] = "[red]" + escaped + "[-]"
-		} else if strings.HasPrefix(line, "+") {
-			lines[i] = "[green]" + escaped + "[-]"
-		} else {
-			lines[i] = escaped
-		}
-	}
-	return strings.Join(lines, "\n")
-}
 
 // FetchAndBuildDetails fetches package details, retrieves PKGBUILD, performs diff if needed, and builds a formatted string for display.
 func (ui *UI) FetchAndBuildDetails(name, source string) string {
 	var info pkgmgr.SearchResults
 	if source == "AUR" {
 		info = pkgmgr.InfoAur("", 5000, name)
+		ui.alpmMutex.Lock()
+		pkgmgr.AddLocalSatisfiers(ui.alpmHandle, info.Results...)
+		ui.alpmMutex.Unlock()
 	} else {
 		ui.alpmMutex.Lock()
 		info = pkgmgr.InfoPacman(ui.alpmHandle, name)
@@ -105,7 +90,7 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 	var sb strings.Builder
 
 	if len(info.Results) == 0 {
-		fmt.Fprintf(&sb, "[blue]Package:[-] %s\n", name)
+		fmt.Fprintf(&sb, "[-:-:-][blue]Package:[-] %s\n", name)
 		fmt.Fprintf(&sb, "[blue]Source:[-] %s\n\n", source)
 		fmt.Fprintf(&sb, "[red]Error: Failed to fetch details[-]\n")
 		return sb.String()
@@ -113,15 +98,33 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 
 	record := info.Results[0]
 
-	// Warning if flagged out of date
-	if record.OutOfDate > 0 {
-		fmt.Fprintf(&sb, "[red]------------------------------------------------------------------[-]\n")
-		fmt.Fprintf(&sb, "[red]WARNING:[-] Flagged OUT OF DATE in the AUR.\n")
-		fmt.Fprintf(&sb, "It is recommended to avoid installing/updating this package or uninstall it.\n")
-		fmt.Fprintf(&sb, "[red]------------------------------------------------------------------[-]\n\n")
+	var width int
+	if ui.activeTab == 0 && ui.detailsView != nil {
+		_, _, width, _ = ui.detailsView.GetInnerRect()
+	} else if ui.activeTab == 1 && ui.updateDetails != nil {
+		_, _, width, _ = ui.updateDetails.GetInnerRect()
+	}
+	if width <= 0 {
+		width = 80 // fallback default
 	}
 
-	// Prepare fields
+	if record.OutOfDate > 0 {
+		boxWidth := max(width - 2, 40)
+		fillLine := func(text string) string {
+			if len(text) > boxWidth {
+				text = text[:boxWidth]
+			}
+			spaces := boxWidth - len(text)
+			return text + strings.Repeat(" ", spaces)
+		}
+
+		fmt.Fprintf(&sb, "[-:-:-][white:red:b]%s[-:-:-]\n", fillLine(""))
+		fmt.Fprintf(&sb, "[white:red:b]%s[-:-:-]\n", fillLine("  WARNING: Flagged OUT OF DATE in the AUR."))
+		fmt.Fprintf(&sb, "[white:red:b]%s[-:-:-]\n", fillLine("  It is recommended to avoid installing/updating this package"))
+		fmt.Fprintf(&sb, "[white:red:b]%s[-:-:-]\n", fillLine("  or uninstall it."))
+		fmt.Fprintf(&sb, "[white:red:b]%s[-:-:-]\n\n", fillLine(""))
+	}
+
 	localVerVal := record.LocalVersion
 	if record.LocalVersion == "" {
 		localVerVal = "None"
@@ -133,7 +136,7 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 	}
 
 	if record.Description != "" {
-		fmt.Fprintf(&sb, "[blue]Description:[-]\n%s\n\n", record.Description)
+		fmt.Fprintf(&sb, "[-:-:-][blue]%-15s[-] %s\n\n", "Description", record.Description)
 	}
 
 	fields := []struct {
@@ -153,15 +156,51 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 		if f.value == "" {
 			continue
 		}
-		fmt.Fprintf(&sb, "[blue]%s:[-] %s\n", f.label, f.value)
+		fmt.Fprintf(&sb, "[-:-:-][blue]%-15s[-] %s\n", f.label, f.value)
 	}
 
-	// Dependencies
-	if len(record.Depends) > 0 {
-		fmt.Fprintf(&sb, "\n[blue]Dependencies:[-]\n%s\n", strings.Join(record.Depends, ", "))
+	if len(record.DepencenciesAndSatisfiers) > 0 {
+		fmt.Fprintf(&sb, "\n")
+		for idx, dep := range record.DepencenciesAndSatisfiers {
+			var check string
+			if dep.Installed {
+				check = "[green][✓][-]"
+			} else {
+				check = "[ ]"
+			}
+
+			depStr := dep.DepName
+			if dep.DepType != "dep" {
+				depStr = fmt.Sprintf("%s (%s)", dep.DepName, dep.DepType)
+			}
+
+			if idx == 0 {
+				fmt.Fprintf(&sb, "[-:-:-][blue]%-15s[-] %s %s\n", "Dependencies", check, depStr)
+			} else {
+				fmt.Fprintf(&sb, "[-:-:-]%-15s %s %s\n", "", check, depStr)
+			}
+		}
+	} else if len(record.Depends) > 0 {
+		fmt.Fprintf(&sb, "\n")
+		for idx, dep := range record.Depends {
+			if idx == 0 {
+				fmt.Fprintf(&sb, "[-:-:-][blue]%-15s[-] [ ] %s\n", "Dependencies", dep)
+			} else {
+				fmt.Fprintf(&sb, "[-:-:-]%-15s [ ] %s\n", "", dep)
+			}
+		}
 	}
 
-	// Get PKGBUILD base and path
+	// Helper to print centered title and a solid yellow horizontal line
+	printDivider := func(title string) {
+		w := max(width - 2, 40)
+		padding := max(((w - len(title)) / 2), 0)
+		centerTitle := strings.Repeat(" ", padding) + title
+		
+		fmt.Fprintf(&sb, "\n[-:-:-][yellow]%s[-:-:-]\n", centerTitle)
+		fmt.Fprintf(&sb, "[yellow]%s[-:-:-]\n", strings.Repeat("─", w))
+	}
+
 	pkgBase := record.PackageBase
 	if pkgBase == "" {
 		pkgBase = name
@@ -181,17 +220,14 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 		}
 	}
 
-	// Fetch remote PKGBUILD
 	remoteURL := pkgmgr.GetPkgbuildURL(source, pkgBase)
 	if remoteURL != "" {
 		remotePKGBUILD, _ = getPkgbuildContentWithTimeout(remoteURL, 5*time.Second)
 	}
 
-	// Render PKGBUILD / PKGBUILD Diff
 	if source == "AUR" {
 		isDifferentVersion := record.LocalVersion != "" && record.LocalVersion != record.Version
 		
-		// Determine whether to show diff or just remote PKGBUILD
 		var showDiff bool
 		var diffOut string
 		var err error
@@ -203,23 +239,22 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 		}
 
 		if showDiff {
-			fmt.Fprintf(&sb, "\n[yellow]----------------- PKGBUILD Diff -----------------[-]\n")
-			fmt.Fprintf(&sb, "%s", formatDiff(diffOut))
+			printDivider("PKGBUILD Diff")
+			fmt.Fprintf(&sb, "%s", util.FormatDiff(diffOut))
 		} else {
-			fmt.Fprintf(&sb, "\n[yellow]----------------- PKGBUILD -----------------[-]\n")
+			printDivider("PKGBUILD")
 			if remotePKGBUILD == "" {
-				fmt.Fprintf(&sb, "[red]Failed to fetch remote PKGBUILD from AUR cgit.[-]\n")
+				fmt.Fprintf(&sb, "[-:-:-][red]Failed to fetch remote PKGBUILD from AUR cgit.[-:-:-]\n")
 			} else {
-				fmt.Fprintf(&sb, "%s", formatDiff(remotePKGBUILD))
+				fmt.Fprintf(&sb, "%s", util.FormatPKGBUILD(remotePKGBUILD))
 			}
 		}
 	} else {
-		// Repository packages
 		if remotePKGBUILD != "" {
-			fmt.Fprintf(&sb, "\n[yellow]----------------- PKGBUILD -----------------[-]\n")
-			fmt.Fprintf(&sb, "%s", formatDiff(remotePKGBUILD))
+			printDivider("PKGBUILD")
+			fmt.Fprintf(&sb, "%s", util.FormatPKGBUILD(remotePKGBUILD))
 		} else {
-			fmt.Fprintf(&sb, "\n[gray]No PKGBUILD available for repository packages.[-]\n")
+			fmt.Fprintf(&sb, "\n[-:-:-][gray]No PKGBUILD available for repository packages.[-:-:-]\n")
 		}
 	}
 

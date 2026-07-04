@@ -22,15 +22,9 @@ import (
 func (ui *UI) handleSearchChange(text string) {
 	term := strings.TrimSpace(text)
 	ui.lastSearchTerm = term
-
-	// Reset selection to the first item on search change
 	ui.pkgTable.Select(1, 0)
 	ui.pkgTable.ScrollToBeginning()
-
-	// Instantly update local search results
 	ui.performLocalSearch(term)
-
-	// Schedule debounced remote AUR search
 	ui.scheduleAurSearch(term)
 }
 
@@ -273,7 +267,6 @@ func (ui *UI) renderPackageTable() {
 
 	ui.pkgTable.Clear()
 
-	// Header row
 	ui.pkgTable.SetCell(0, 0, tview.NewTableCell("").SetSelectable(false).SetMaxWidth(8))
 	ui.pkgTable.SetCell(0, 1, tview.NewTableCell("Package").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetExpansion(1))
 	ui.pkgTable.SetCell(0, 2, tview.NewTableCell("Source   ").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
@@ -305,14 +298,11 @@ func (ui *UI) renderPackageTable() {
 		sourceColor := getSourceColor(p.Source)
 		sourceCell := tview.NewTableCell(p.Source).SetTextColor(sourceColor).SetMaxWidth(12)
 
-		installedStr := "No"
+		installedStr := ""
 		installedCell := tview.NewTableCell(installedStr).SetMaxWidth(10)
 		if p.IsInstalled {
-			installedStr = "Yes"
-			installedCell.SetText(installedStr).
-				SetStyle(tcell.StyleDefault.Foreground(tcell.ColorDefault))
-		} else {
-			installedCell.SetTextColor(tcell.ColorGray)
+			installedStr = " ✓ "
+			installedCell.SetText(installedStr).SetTextColor(tcell.ColorGreen)
 		}
 
 		reputationStr := ""

@@ -44,7 +44,7 @@ type InfoRecord struct {
 	Source            string `json:"Source"`
 	Architecture      string `json:"Architecture"`
 	IsIgnored         bool
-	DepsAndSatisfiers []DependencySatisfier
+	DepencenciesAndSatisfiers []DependencySatisfier
 }
 
 type DependencySatisfier struct {

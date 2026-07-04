@@ -750,27 +750,27 @@ func (ui *UI) updateStatusDisplay() {
 func getSourceColor(source string) tcell.Color {
 	switch strings.ToLower(source) {
 	case "core":
-		return tcell.ColorMaroon
+		return tcell.ColorRed
 	case "cachyos-core-v3":
 		return tcell.ColorRed
 	case "cachyos-core-v4":
 		return tcell.ColorRed
 	case "extra":
-		return tcell.ColorGreen
+		return tcell.ColorLime
 	case "cachyos-extra-v3":
 		return tcell.ColorLime
 	case "cachyos-extra-v4":
 		return tcell.ColorLime
 	case "multilib":
 		return tcell.ColorYellow
-	case "aur":
-		return tcell.ColorTeal
 	case "cachyos":
 		return tcell.ColorPurple
 	case "cachyos-v3":
 		return tcell.ColorPurple
 	case "cachyos-v4":
 		return tcell.ColorPurple
+	case "aur":
+		return tcell.ColorTeal
 	default:
 		return tcell.ColorDefault
 	}
