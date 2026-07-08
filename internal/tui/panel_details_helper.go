@@ -25,12 +25,21 @@ func getPkgbuildContentWithTimeout(url string, timeout time.Duration) (string, e
 			util.PrintError("Failed to close response body: %v", err)
 		}
 	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("bad status code: %d", resp.StatusCode)
+	}
+	if strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
+		return "", fmt.Errorf("received HTML response instead of raw content")
+	}
+
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
 	return string(b), nil
 }
+
 
 func runDiff(localContent, remoteContent string) (string, error) {
 	tmpLocal, err := os.CreateTemp("", "drxpkg-local-")
@@ -71,7 +80,6 @@ func runDiff(localContent, remoteContent string) (string, error) {
 	output, _ := cmd.CombinedOutput()
 	return string(output), nil
 }
-
 
 // FetchAndBuildDetails fetches package details, retrieves PKGBUILD, performs diff if needed, and builds a formatted string for display.
 func (ui *UI) FetchAndBuildDetails(name, source string) string {
@@ -201,6 +209,11 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 		fmt.Fprintf(&sb, "[yellow]%s[-:-:-]\n", strings.Repeat("─", w))
 	}
 
+	resolvedSource := source
+	if source == "local" {
+		resolvedSource = ui.getPackageSource(name)
+	}
+
 	pkgBase := record.PackageBase
 	if pkgBase == "" {
 		pkgBase = name
@@ -209,7 +222,7 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 	var localPKGBUILD string
 	var remotePKGBUILD string
 
-	if source == "AUR" {
+	if resolvedSource == "AUR" {
 		home, err := os.UserHomeDir()
 		if err == nil {
 			localPath := filepath.Join(home, ".cache/yay", pkgBase, "PKGBUILD")
@@ -220,12 +233,12 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 		}
 	}
 
-	remoteURL := pkgmgr.GetPkgbuildURL(source, pkgBase)
+	remoteURL := pkgmgr.GetPkgbuildURL(resolvedSource, pkgBase)
 	if remoteURL != "" {
 		remotePKGBUILD, _ = getPkgbuildContentWithTimeout(remoteURL, 5*time.Second)
 	}
 
-	if source == "AUR" {
+	if resolvedSource == "AUR" {
 		isDifferentVersion := record.LocalVersion != "" && record.LocalVersion != record.Version
 		
 		var showDiff bool
@@ -244,7 +257,11 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 		} else {
 			printDivider("PKGBUILD")
 			if remotePKGBUILD == "" {
-				fmt.Fprintf(&sb, "[-:-:-][red]Failed to fetch remote PKGBUILD from AUR cgit.[-:-:-]\n")
+				if source == "local" {
+					fmt.Fprintf(&sb, "[-:-:-][red]No PKGBUILD available (failed to fetch from AUR cgit).[-:-:-]\n")
+				} else {
+					fmt.Fprintf(&sb, "[-:-:-][red]Failed to fetch remote PKGBUILD from AUR cgit.[-:-:-]\n")
+				}
 			} else {
 				fmt.Fprintf(&sb, "%s", util.FormatPKGBUILD(remotePKGBUILD))
 			}

@@ -25,3 +25,22 @@ func (ui *UI) showConfirmation(message string, onConfirm func()) {
 
 	ui.pages.AddPage("confirmation", modal, true, true)
 }
+
+
+func (ui *UI) showAlert(message string) {
+	prevFocus := ui.app.GetFocus()
+	modal := tview.NewModal().
+		SetText(message).
+		AddButtons([]string{"OK"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			ui.pages.RemovePage("alert")
+			ui.app.SetFocus(prevFocus)
+		})
+	modal.SetBackgroundColor(tcell.ColorBlack)
+	modal.SetTextColor(tcell.ColorDefault)
+	modal.SetButtonBackgroundColor(ui.theme.SelectedTextColor)
+	modal.SetButtonTextColor(ui.theme.PrimaryColor)
+
+	ui.pages.AddPage("alert", modal, true, true)
+}
+

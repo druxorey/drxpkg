@@ -2,6 +2,8 @@
 package pkgmgr
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -42,5 +44,64 @@ func TestGitlabUrlEncoding(t *testing.T) {
 		if res != test.expected {
 			t.Errorf("encodePackageGitlabUrl(%q) = %q; expected %q", test.input, res, test.expected)
 		}
+	}
+}
+
+func TestGetPkgbuildContentValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		statusCode  int
+		contentType string
+		body        string
+		expectError bool
+		expected    string
+	}{
+		{
+			name:        "Valid raw PKGBUILD",
+			statusCode:  200,
+			contentType: "text/plain",
+			body:        "pkgname=hello",
+			expectError: false,
+			expected:    "pkgname=hello",
+		},
+		{
+			name:        "HTML redirect page / login page",
+			statusCode:  200,
+			contentType: "text/html; charset=utf-8",
+			body:        "<html><body>Sign In</body></html>",
+			expectError: true,
+		},
+		{
+			name:        "404 Not Found status code",
+			statusCode:  404,
+			contentType: "text/plain",
+			body:        "Not Found",
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				w.WriteHeader(tc.statusCode)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			content, err := GetPkgbuildContent(server.URL)
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if content != tc.expected {
+					t.Errorf("expected content %q, got %q", tc.expected, content)
+				}
+			}
+		})
 	}
 }

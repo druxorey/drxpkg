@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/druxorey/drxpkg/internal/util"
 )
@@ -47,6 +48,13 @@ func GetPkgbuildContent(url string) (string, error) {
 			util.PrintError("Failed to close response body: %v", err)
 		}
 	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("bad status code: %d", resp.StatusCode)
+	}
+	if strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
+		return "", fmt.Errorf("received HTML response instead of raw content")
+	}
 
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {

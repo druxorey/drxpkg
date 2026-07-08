@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -89,13 +91,22 @@ type UI struct {
 	installDetailsCache map[string]string
 
 	// Tab 2: Update Views
-	updatePageFlex    *tview.Flex
-	updateTable       *tview.Table
-	updateDetails     *tview.TextView
-	updatePackages    []pkgmgr.UpdatePackage
-	selectedUpdate    *pkgmgr.UpdatePackage
+	updatePageFlex     *tview.Flex
+	updateTable        *tview.Table
+	updateDetails      *tview.TextView
+	updatePackages     []pkgmgr.UpdatePackage
+	selectedUpdate     *pkgmgr.UpdatePackage
 	updateDetailsCache map[string]string
 	cacheMutex         sync.RWMutex
+
+	// Tab 3: Maintenance Views
+	manageTable   *tview.Table
+	manageDetails *tview.TextView
+	manageFlex    *tview.Flex
+
+	// System detection
+	isCachyOS bool
+	aurHelper string
 
 	// State
 	activeTab      int
@@ -132,7 +143,8 @@ func New(conf *config.Settings) (*UI, error) {
 		selectedInstall:     make(map[string]bool),
 	}
 
-	// Configure global tview styles to inherit terminal transparency
+	ui.detectSystemConfig()
+
 	tview.Styles.PrimitiveBackgroundColor = tcell.ColorDefault
 	tview.Styles.ContrastBackgroundColor = tcell.ColorDefault
 	tview.Styles.MoreContrastBackgroundColor = tcell.ColorDefault
@@ -157,6 +169,44 @@ func New(conf *config.Settings) (*UI, error) {
 	ui.backgroundUpdateCheck()
 
 	return ui, nil
+}
+
+
+func (ui *UI) detectSystemConfig() {
+	ui.isCachyOS = false
+	if data, err := os.ReadFile("/etc/os-release"); err == nil {
+		for line := range strings.Lines(string(data)) {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "ID=") {
+				id := strings.Trim(line[3:], `"'`)
+				if id == "cachyos" {
+					ui.isCachyOS = true
+					break
+				}
+			}
+			if strings.HasPrefix(line, "ID_LIKE=") {
+				like := strings.Trim(line[8:], `"'`)
+				if strings.Contains(like, "cachyos") {
+					ui.isCachyOS = true
+					break
+				}
+			}
+		}
+	}
+
+	ui.aurHelper = ""
+	configCmds := strings.ToLower(ui.conf.InstallCommand + " " + ui.conf.UninstallCommand + " " + ui.conf.SysUpgradeCmd)
+	if strings.Contains(configCmds, "paru") {
+		ui.aurHelper = "paru"
+	} else if strings.Contains(configCmds, "yay") {
+		ui.aurHelper = "yay"
+	} else {
+		if _, err := exec.LookPath("paru"); err == nil {
+			ui.aurHelper = "paru"
+		} else if _, err := exec.LookPath("yay"); err == nil {
+			ui.aurHelper = "yay"
+		}
+	}
 }
 
 
@@ -355,7 +405,7 @@ func (ui *UI) setupFocusBorder(widget FocusBorderable) {
 
 
 func (ui *UI) drawTabBar() {
-	tabs := []string{"[1] Install", "[2] Update", "[3] Manage"}
+	tabs := []string{"[1] Install", "[2] Update", "[3] Maintenance"}
 	var styledTabs []string
 	for i, tab := range tabs {
 		if i == ui.activeTab {
@@ -385,6 +435,7 @@ func (ui *UI) switchTab(tabIndex int) {
 		ui.checkForUpdates()
 	case 2:
 		ui.pages.SwitchToPage("manage")
+		ui.app.SetFocus(ui.manageTable)
 	}
 }
 
@@ -396,7 +447,7 @@ func (ui *UI) restoreFocusToActiveTab() {
 	case 1:
 		ui.app.SetFocus(ui.updateTable)
 	case 2:
-		// manage tab has no interactive input fields to focus.
+		ui.app.SetFocus(ui.manageTable)
 	}
 }
 
