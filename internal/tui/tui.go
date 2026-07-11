@@ -103,6 +103,13 @@ type UI struct {
 	manageTable   *tview.Table
 	manageDetails *tview.TextView
 	manageFlex    *tview.Flex
+	managePages   *tview.Pages
+	trashTable    *tview.Table
+	trashFiles    []trashFile
+	cacheTable    *tview.Table
+	cacheOptions  []cacheOption
+	logsTable     *tview.Table
+	logOptions    []logOption
 
 	// System detection
 	isCachyOS bool
