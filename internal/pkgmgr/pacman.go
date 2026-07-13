@@ -2,10 +2,6 @@
 package pkgmgr
 
 import (
-	"errors"
-	"math"
-	"strings"
-
 	"github.com/Jguer/go-alpm/v2"
 	pconf "github.com/Morganamilo/go-pacmanconf"
 )
@@ -34,67 +30,6 @@ func InitPacmanDbs(dbPath, confPath string) (*alpm.Handle, error) {
 	_ = h.SetIgnoreGroups(conf.IgnoreGroup)
 
 	return h, nil
-}
-
-
-func SearchRepos(h *alpm.Handle, term string, maxResults int) ([]Package, []Package, error) {
-	packages := []Package{}
-	installed := []Package{}
-
-	if h == nil {
-		return packages, installed, errors.New("alpm handle is nil")
-	}
-	dbs, err := h.SyncDBs()
-	if err != nil {
-		return packages, installed, err
-	}
-	local, err := h.LocalDB()
-	if err != nil {
-		return packages, installed, err
-	}
-
-	searchDbs := append(dbs.Slice(), local)
-	term = strings.ToLower(term)
-
-	counter := 0
-	for _, db := range searchDbs {
-		for _, pkg := range db.PkgCache().Slice() {
-			if counter >= maxResults {
-				break
-			}
-
-			if strings.Contains(strings.ToLower(pkg.Name()), term) ||
-				strings.Contains(strings.ToLower(pkg.Description()), term) {
-				p := Package{
-					Name:         pkg.Name(),
-					Source:       db.Name(),
-					IsInstalled:  local.Pkg(pkg.Name()) != nil,
-					LastModified: int(pkg.BuildDate().Unix()),
-					Popularity:   math.MaxFloat64,
-				}
-				if db != local {
-					packages = append(packages, p)
-				} else {
-					installed = append(installed, p)
-				}
-
-				counter++
-			}
-		}
-	}
-	return packages, installed, nil
-}
-
-
-func IsPackageInstalled(h *alpm.Handle, pkg string) bool {
-	if h == nil {
-		return false
-	}
-	local, err := h.LocalDB()
-	if err != nil {
-		return false
-	}
-	return local.Pkg(pkg) != nil
 }
 
 

@@ -10,7 +10,7 @@ import (
 )
 
 
-func (ui *UI) setupSettingsPanel() {
+func (ui *UI) setupSettingsPopup() {
 	// Initialize inputs
 	ui.settingInputs = make([]*tview.InputField, 8)
 	ui.settingInputs[0] = tview.NewInputField().SetText(ui.conf.PackagesPath)

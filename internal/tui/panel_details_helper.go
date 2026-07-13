@@ -2,8 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,32 +11,6 @@ import (
 	"github.com/druxorey/drxpkg/internal/pkgmgr"
 	"github.com/druxorey/drxpkg/internal/util"
 )
-
-func getPkgbuildContentWithTimeout(url string, timeout time.Duration) (string, error) {
-	client := http.Client{Timeout: timeout}
-	resp, err := client.Get(url)
-	if err != nil {
-		return "", err
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			util.PrintError("Failed to close response body: %v", err)
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("bad status code: %d", resp.StatusCode)
-	}
-	if strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
-		return "", fmt.Errorf("received HTML response instead of raw content")
-	}
-
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
 
 
 func runDiff(localContent, remoteContent string) (string, error) {
@@ -235,7 +207,7 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 
 	remoteURL := pkgmgr.GetPkgbuildURL(resolvedSource, pkgBase)
 	if remoteURL != "" {
-		remotePKGBUILD, _ = getPkgbuildContentWithTimeout(remoteURL, 5*time.Second)
+		remotePKGBUILD, _ = pkgmgr.GetPkgbuildContent(remoteURL, 5*time.Second)
 	}
 
 	if resolvedSource == "AUR" {

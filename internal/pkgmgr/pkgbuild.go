@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/druxorey/drxpkg/internal/util"
 )
@@ -38,8 +39,9 @@ func GetPkgbuildURL(source, base string) string {
 }
 
 
-func GetPkgbuildContent(url string) (string, error) {
-	resp, err := http.Get(url)
+func GetPkgbuildContent(url string, timeout time.Duration) (string, error) {
+	client := http.Client{Timeout: timeout}
+	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
 	}

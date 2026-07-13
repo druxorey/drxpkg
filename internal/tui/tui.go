@@ -361,7 +361,7 @@ func (ui *UI) setupWidgets() {
 		ui.loadPackageDetails(pkg)
 	})
 	ui.setupUpdatePage()
-	ui.setupSettingsPanel()
+	ui.setupSettingsPopup()
 	ui.setupHelpPopup()
 }
 
@@ -381,8 +381,8 @@ func (ui *UI) setupLayout() {
 		AddItem(installFlex, 0, 1, true).
 		AddItem(ui.installRightFlex, 0, 1, false)
 
-	// Tab 3: Package Management Page
-	managePage := ui.setupManagePage()
+	// Tab 3: Package Maintenance Section
+	managePage := ui.setupMaintenanceSection()
 
 	// Tab Pages
 	ui.pages.AddPage("install", installPage, true, true)

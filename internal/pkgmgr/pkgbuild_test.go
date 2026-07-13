@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 
@@ -89,7 +90,7 @@ func TestGetPkgbuildContentValidation(t *testing.T) {
 			}))
 			defer server.Close()
 
-			content, err := GetPkgbuildContent(server.URL)
+			content, err := GetPkgbuildContent(server.URL, 5*time.Second)
 			if tc.expectError {
 				if err == nil {
 					t.Errorf("expected error, got nil")

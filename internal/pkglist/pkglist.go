@@ -15,8 +15,6 @@ import (
 
 const DefaultPackagesFileName = "packages.list"
 
-var Categories = []string{"server", "minimal", "desktop", "new"}
-
 type PackageMap map[string][]string
 
 

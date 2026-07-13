@@ -20,10 +20,6 @@ func TestInitPacmanDbsInvalidPath(t *testing.T) {
 
 func TestPacmanNilHandle(t *testing.T) {
 	// Test behavior of ALPM wrapper functions under a nil handle
-	if IsPackageInstalled(nil, "any-package") {
-		t.Errorf("IsPackageInstalled should return false on a nil handle")
-	}
-
 	infoRes := InfoPacman(nil, "any-package")
 	if infoRes.Error != "alpm handle is nil" {
 		t.Errorf("expected 'alpm handle is nil' error, got: %s", infoRes.Error)

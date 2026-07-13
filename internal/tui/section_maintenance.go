@@ -243,7 +243,7 @@ func (ui *UI) getLogOptions() []logOption {
 }
 
 
-func (ui *UI) setupManagePage() tview.Primitive {
+func (ui *UI) setupMaintenanceSection() tview.Primitive {
 	// Initialize Left Menu Table
 	ui.manageTable = tview.NewTable().
 		SetSelectable(true, false).
