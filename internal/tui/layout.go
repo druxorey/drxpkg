@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,7 +41,6 @@ const (
 	installColInst = iota
 	installColPackage
 	installColSource
-	installColVotes
 )
 
 // Update Table Columns
@@ -261,6 +261,17 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 		{"URL", record.URL},
 		{"Licenses", strings.Join(record.License, ", ")},
 		{"Maintainer", maintainerVal},
+	}
+
+	if record.Source == "AUR" {
+		fields = append(fields, struct {
+			label string
+			value string
+		}{"Votes", strconv.Itoa(record.NumVotes)})
+		fields = append(fields, struct {
+			label string
+			value string
+		}{"Popularity", fmt.Sprintf("%.2f", record.Popularity)})
 	}
 
 	for _, f := range fields {

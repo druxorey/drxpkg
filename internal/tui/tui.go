@@ -127,6 +127,10 @@ type UI struct {
 	searchCancel             context.CancelFunc
 	searchTimer              *time.Timer
 	pkgsCache                []cachedPkg
+	aurPkgsMutex             sync.RWMutex
+	aurPkgsCache             []string
+	aurCacheLoading          bool
+	aurCacheLoaded           bool
 
 	// Visual Mode State
 	inVisualMode             bool
@@ -175,6 +179,7 @@ func New(conf *config.Settings) (*UI, error) {
 
 	ui.rebuildCache()
 	ui.backgroundUpdateCheck()
+	ui.loadAurPackagesCache()
 
 	return ui, nil
 }
@@ -856,3 +861,74 @@ func (ui *UI) handleVisualModeToggle(event *tcell.EventKey, table *tview.Table, 
 	}
 	return false
 }
+
+// loadAurPackagesCache runs yay -Slqa (or helper -Slqa) in the background to load AUR packages cache.
+func (ui *UI) loadAurPackagesCache() {
+	if ui.conf.DisableAur {
+		return
+	}
+
+	ui.aurPkgsMutex.Lock()
+	ui.aurCacheLoading = true
+	ui.aurPkgsMutex.Unlock()
+
+	ui.setStatus("Loading AUR cache...")
+
+	go func() {
+		helper := ui.aurHelper
+		if helper == "" {
+			helper = "yay"
+		}
+
+		cmd := exec.Command(helper, "-Slqa")
+		out, err := cmd.Output()
+		if err != nil {
+			ui.aurPkgsMutex.Lock()
+			ui.aurCacheLoading = false
+			ui.aurPkgsMutex.Unlock()
+			ui.app.QueueUpdateDraw(func() {
+				ui.setStatus(fmt.Sprintf("Failed to load AUR cache: %v", err))
+			})
+			return
+		}
+
+		var aurPkgs []string
+		lines := strings.Split(string(out), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			parts := strings.Fields(line)
+			if len(parts) == 0 {
+				continue
+			}
+			var pkgName string
+			if len(parts) >= 2 {
+				repo := strings.ToLower(parts[0])
+				if repo == "aur" {
+					pkgName = parts[1]
+				} else {
+					continue
+				}
+			} else {
+				pkgName = parts[0]
+			}
+			aurPkgs = append(aurPkgs, pkgName)
+		}
+
+		ui.aurPkgsMutex.Lock()
+		ui.aurPkgsCache = aurPkgs
+		ui.aurCacheLoaded = true
+		ui.aurCacheLoading = false
+		ui.aurPkgsMutex.Unlock()
+
+		ui.app.QueueUpdateDraw(func() {
+			ui.setStatus("AUR cache loaded successfully.")
+			if ui.lastSearchTerm != "" {
+				ui.performLocalSearch(ui.lastSearchTerm)
+			}
+		})
+	}()
+}
+

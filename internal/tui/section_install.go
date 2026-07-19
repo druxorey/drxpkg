@@ -2,14 +2,11 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/druxorey/drxpkg/internal/pkglist"
 	"github.com/druxorey/drxpkg/internal/pkgmgr"
@@ -28,7 +25,6 @@ func (ui *UI) handleSearchChange(text string) {
 	ui.pkgTable.Select(1, 0)
 	ui.pkgTable.ScrollToBeginning()
 	ui.performLocalSearch(term)
-	ui.scheduleAurSearch(term)
 }
 
 // performLocalSearch filters the local package cache based on the provided term and updates the UI
@@ -57,7 +53,36 @@ func (ui *UI) performLocalSearch(term string) {
 	}
 	ui.alpmMutex.Unlock()
 
+	var aurPkgs []pkgmgr.Package
+	if !ui.conf.DisableAur {
+		ui.aurPkgsMutex.RLock()
+		for _, name := range ui.aurPkgsCache {
+			nameLower := strings.ToLower(name)
+			if strings.Contains(nameLower, termLower) {
+				aurPkgs = append(aurPkgs, pkgmgr.Package{
+					Name:   name,
+					Source: "AUR",
+				})
+			}
+		}
+		ui.aurPkgsMutex.RUnlock()
+	}
+
+	installedMap := make(map[string]bool)
+	ui.alpmMutex.Lock()
+	for _, cp := range ui.pkgsCache {
+		if cp.IsInstalled {
+			installedMap[cp.Name] = true
+		}
+	}
+	ui.alpmMutex.Unlock()
+
+	for idx := range aurPkgs {
+		aurPkgs[idx].IsInstalled = installedMap[aurPkgs[idx].Name]
+	}
+
 	allPkgs := append(reposPkgs, localPkgs...)
+	allPkgs = append(allPkgs, aurPkgs...)
 
 	uniqueMap := make(map[string]pkgmgr.Package)
 	for _, p := range allPkgs {
@@ -92,157 +117,28 @@ func (ui *UI) performLocalSearch(term string) {
 	ui.shownPackages = resultList
 	ui.renderPackageTable()
 
+	suffix := ""
+	ui.aurPkgsMutex.RLock()
+	if ui.aurCacheLoading {
+		suffix = " (AUR cache loading...)"
+	} else if !ui.aurCacheLoaded && !ui.conf.DisableAur {
+		suffix = " (AUR cache load failed)"
+	}
+	ui.aurPkgsMutex.RUnlock()
+
 	if len(resultList) == 0 {
-		ui.setStatus("No packages found.")
+		ui.setStatus("No packages found." + suffix)
 	} else {
-		ui.setStatus(fmt.Sprintf("Found %d packages.", len(resultList)))
-	}
-}
-
-// scheduleAurSearch manages debounced AUR search execution to prevent excessive API calls
-func (ui *UI) scheduleAurSearch(term string) {
-	ui.searchMutex.Lock()
-	defer ui.searchMutex.Unlock()
-
-	if ui.searchCancel != nil {
-		ui.searchCancel()
-		ui.searchCancel = nil
-	}
-
-	if ui.searchTimer != nil {
-		ui.searchTimer.Stop()
-		ui.searchTimer = nil
-	}
-
-	if len(term) < 3 || ui.conf.DisableAur {
-		return
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	ui.searchCancel = cancel
-
-	ui.searchTimer = time.AfterFunc(200*time.Millisecond, func() {
-		ui.runAurSearch(ctx, term)
-	})
-}
-
-// runAurSearch performs the network-based AUR search and updates the interface with results
-func (ui *UI) runAurSearch(ctx context.Context, term string) {
-	ui.app.QueueUpdateDraw(func() {
-		if ctx.Err() == nil {
-			ui.setStatus("Searching AUR...")
-		}
-	})
-
-	aurPkgs, err := pkgmgr.SearchAur(ctx, "", term, 5000, 2000)
-	if err != nil {
-		if ctx.Err() != nil {
-			return
-		}
-		ui.app.QueueUpdateDraw(func() {
-			ui.setStatus("[red]AUR Search error: " + err.Error())
-		})
-		return
-	}
-
-	installedMap := make(map[string]bool)
-	ui.alpmMutex.Lock()
-	for _, cp := range ui.pkgsCache {
-		if cp.IsInstalled {
-			installedMap[cp.Name] = true
-		}
-	}
-	ui.alpmMutex.Unlock()
-
-	for idx := range aurPkgs {
-		aurPkgs[idx].IsInstalled = installedMap[aurPkgs[idx].Name]
-	}
-
-	if ctx.Err() != nil {
-		return
-	}
-
-	ui.app.QueueUpdateDraw(func() {
-		if ctx.Err() != nil {
-			return
-		}
-
-		termLower := strings.ToLower(term)
-		var reposPkgs []pkgmgr.Package
-		var localPkgs []pkgmgr.Package
-
-		ui.alpmMutex.Lock()
-		for _, cp := range ui.pkgsCache {
-			if strings.Contains(cp.NameLower, termLower) ||
-				strings.Contains(cp.DescriptionLower, termLower) {
-				if cp.Source == "local" {
-					localPkgs = append(localPkgs, cp.Package)
-				} else {
-					reposPkgs = append(reposPkgs, cp.Package)
-				}
-			}
-		}
-		ui.alpmMutex.Unlock()
-
-		allPkgs := append(reposPkgs, localPkgs...)
-		allPkgs = append(allPkgs, aurPkgs...)
-
-		uniqueMap := make(map[string]pkgmgr.Package)
-		for _, p := range allPkgs {
-			existing, exists := uniqueMap[p.Name]
-			if !exists || (!existing.IsInstalled && p.IsInstalled) {
-				uniqueMap[p.Name] = p
-			}
-		}
-
-		var resultList []pkgmgr.Package
-		for _, p := range uniqueMap {
-			resultList = append(resultList, p)
-		}
-
-		sort.Slice(resultList, func(i, j int) bool {
-			a, b := resultList[i], resultList[j]
-			if a.IsInstalled != b.IsInstalled {
-				return a.IsInstalled
-			}
-			aScore := pkgmgr.GetUnifiedScore(a, term)
-			bScore := pkgmgr.GetUnifiedScore(b, term)
-			if aScore != bScore {
-				return aScore > bScore
-			}
-			return a.Name < b.Name
-		})
-
-		if len(resultList) > ui.conf.MaxResults {
-			resultList = resultList[:ui.conf.MaxResults]
-		}
-
-		ui.shownPackages = resultList
-		ui.renderPackageTable()
-
-		if len(resultList) == 0 {
-			ui.setStatus("No packages found.")
+		if !ui.conf.DisableAur {
+			ui.setStatus(fmt.Sprintf("Found %d packages (incl. AUR)%s.", len(resultList), suffix))
 		} else {
-			ui.setStatus(fmt.Sprintf("Found %d packages (incl. AUR).", len(resultList)))
+			ui.setStatus(fmt.Sprintf("Found %d packages.", len(resultList)))
 		}
-	})
+	}
 }
 
 // forceSearch immediately triggers a search operation, bypassing any active debounces
 func (ui *UI) forceSearch(term string) {
-	ui.searchMutex.Lock()
-	defer ui.searchMutex.Unlock()
-
-	if ui.searchCancel != nil {
-		ui.searchCancel()
-		ui.searchCancel = nil
-	}
-
-	if ui.searchTimer != nil {
-		ui.searchTimer.Stop()
-		ui.searchTimer = nil
-	}
-
 	ui.lastSearchTerm = term
 
 	// Reset selection to the first item on forced search
@@ -250,15 +146,6 @@ func (ui *UI) forceSearch(term string) {
 	ui.pkgTable.ScrollToBeginning()
 
 	ui.performLocalSearch(term)
-
-	if ui.conf.DisableAur || term == "" {
-		return
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	ui.searchCancel = cancel
-
-	go ui.runAurSearch(ctx, term)
 }
 
 // renderPackageTable updates the visual table component with the current package list
@@ -273,7 +160,6 @@ func (ui *UI) renderPackageTable() {
 	ui.pkgTable.SetCell(0, installColInst, tview.NewTableCell("Inst").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(4))
 	ui.pkgTable.SetCell(0, installColPackage, tview.NewTableCell("Package").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetExpansion(1))
 	ui.pkgTable.SetCell(0, installColSource, tview.NewTableCell("Source           ").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(17))
-	ui.pkgTable.SetCell(0, installColVotes, tview.NewTableCell("Votes").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
 
 	for idx, p := range ui.shownPackages {
 		row := idx + 1
@@ -292,16 +178,9 @@ func (ui *UI) renderPackageTable() {
 			installedCell.SetText(installedStr).SetTextColor(tcell.ColorGreen)
 		}
 
-		reputationStr := ""
-		if p.Source == "AUR" {
-			reputationStr = strconv.Itoa(p.Votes)
-		}
-		reputationCell := tview.NewTableCell(reputationStr).SetTextColor(tcell.ColorDefault).SetMaxWidth(12)
-
 		ui.pkgTable.SetCell(row, installColInst, installedCell)
 		ui.pkgTable.SetCell(row, installColPackage, pkgCell)
 		ui.pkgTable.SetCell(row, installColSource, sourceCell)
-		ui.pkgTable.SetCell(row, installColVotes, reputationCell)
 	}
 
 	var activeRow int
@@ -471,12 +350,12 @@ func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
 	_ = ui.reinitPacmanDbs()
 
 	switch ui.activeTab {
-	case 0:
+	case tabInstall:
 		ui.selectedInstall = make(map[string]bool)
 		if ui.lastSearchTerm != "" {
 			ui.forceSearch(ui.lastSearchTerm)
 		}
-	case 1:
+	case tabUpdate:
 		ui.updatePackages = nil
 		ui.checkForUpdates()
 	}
