@@ -7,7 +7,10 @@ import (
 )
 
 
-func InitPacmanDbs(dbPath, confPath string) (*alpm.Handle, error) {
+func InitPacmanDbs() (*alpm.Handle, error) {
+	dbPath := "/var/lib/pacman/"
+	confPath := "/etc/pacman.conf"
+
 	h, err := alpm.Initialize("/", dbPath)
 	if err != nil {
 		return nil, err

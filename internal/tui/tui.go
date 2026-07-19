@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,14 +28,14 @@ type cachedPkg struct {
 
 // Theme defines the visual color palette and styling configuration for the TUI components.
 type Theme struct {
-	PrimaryColor tcell.Color               // Main accent color used for focused borders, highlights, and headers
-	UnfocusedBorderColor tcell.Color       // Color applied to primitive borders when they do not have keyboard focus
-	FocusedBorderColor tcell.Color         // Color applied to primitive borders when the widget is actively focused
-	EditingBorderColor tcell.Color         // Color used for active input fields when the user is in text editing mode
-	NeutralGrayColor tcell.Color           // Used for secondary labels, inactive buttons, or disabled indicators
-	SelectedTextColor tcell.Color          // Foreground color used for highlighted/selected text in lists and tables
-	SettingsFieldFocusedBg tcell.Color     // Background color of checkboxes/fields when focused in the settings menu
-	SettingsFieldFocusedFg tcell.Color     // Text color of checkboxes/fields when focused in the settings menu
+	PrimaryColor           tcell.Color // Main accent color used for focused borders, highlights, and headers
+	UnfocusedBorderColor   tcell.Color // Color applied to primitive borders when they do not have keyboard focus
+	FocusedBorderColor     tcell.Color // Color applied to primitive borders when the widget is actively focused
+	EditingBorderColor     tcell.Color // Color used for active input fields when the user is in text editing mode
+	NeutralGrayColor       tcell.Color // Used for secondary labels, inactive buttons, or disabled indicators
+	SelectedTextColor      tcell.Color // Foreground color used for highlighted/selected text in lists and tables
+	SettingsFieldFocusedBg tcell.Color // Background color of checkboxes/fields when focused in the settings menu
+	SettingsFieldFocusedFg tcell.Color // Text color of checkboxes/fields when focused in the settings menu
 }
 
 // DefaultTheme represents the standard blue-accented dark theme of the application.
@@ -59,92 +58,94 @@ type FocusBorderable interface {
 }
 
 type UI struct {
-	theme      Theme
-	conf       *config.Settings
-	app        *tview.Application
-	alpmHandle *alpm.Handle
-	alpmMutex  sync.Mutex
+	theme                    Theme
+	conf                     *config.Settings
+	app                      *tview.Application
+	alpmHandle               *alpm.Handle
+	alpmMutex                sync.Mutex
 
 	// Main Layout
-	grid                 *tview.Grid
-	tabBar               *tview.TextView
-	pages                *tview.Pages
-	settingsGrid         *tview.Grid
-	settingInputs        []*tview.InputField
-	settingAurCb         *tview.Checkbox
-	settingHooksCb       *tview.Checkbox
-	btnSave              *tview.TextView
-	btnDefaults          *tview.TextView
-	settingsFocusedIndex int
-	settingsEditMode     bool
-	helpGrid             *tview.Grid
-	settingsPopupOpen    bool
-	helpPopupOpen        bool
+	grid                     *tview.Grid
+	tabBar                   *tview.TextView
+	pages                    *tview.Pages
+	settingsGrid             *tview.Grid
+	settingInputs            []*tview.InputField
+	settingAurCb             *tview.Checkbox
+	settingHooksCb           *tview.Checkbox
+	btnSave                  *tview.TextView
+	btnDefaults              *tview.TextView
+	settingsFocusedIndex     int
+	settingsEditMode         bool
+	helpGrid                 *tview.Grid
+	settingsPopupOpen        bool
+	helpPopupOpen            bool
 
 	// Tab 1: Install Views
-	searchField         *tview.InputField
-	pkgTable            *tview.Table
-	detailsView         *tview.TextView
-	statusText          *tview.TextView
-	installRightFlex    *tview.Flex
-	selectedTable       *tview.Table
-	installDetailsCache map[string]string
+	searchField              *tview.InputField
+	pkgTable                 *tview.Table
+	detailsView              *tview.TextView
+	statusText               *tview.TextView
+	installLeftFlex          *tview.Flex
+	installRightFlex         *tview.Flex
+	selectedTable            *tview.Table
+	installDetailsCache      map[string]string
+	ignoreSearchChange       bool
 
 	// Tab 2: Update Views
-	updatePageFlex     *tview.Flex
-	updateTable        *tview.Table
-	updateDetails      *tview.TextView
-	updatePackages     []pkgmgr.UpdatePackage
-	selectedUpdate     *pkgmgr.UpdatePackage
-	updateDetailsCache map[string]string
-	cacheMutex         sync.RWMutex
+	updatePageFlex           *tview.Flex
+	updateTable              *tview.Table
+	updateDetails            *tview.TextView
+	updatePackages           []pkgmgr.UpdatePackage
+	selectedUpdate           *pkgmgr.UpdatePackage
+	updateDetailsCache       map[string]string
+	cacheMutex               sync.RWMutex
 
 	// Tab 3: Maintenance Views
-	manageTable   *tview.Table
-	manageDetails *tview.TextView
-	manageFlex    *tview.Flex
-	managePages   *tview.Pages
-	trashTable    *tview.Table
-	trashFiles    []trashFile
-	cacheTable    *tview.Table
-	cacheOptions  []cacheOption
-	logsTable     *tview.Table
-	logOptions    []logOption
+	manageTable              *tview.Table
+	manageDetails            *tview.TextView
+	manageFlex               *tview.Flex
+	managePages              *tview.Pages
+	trashTable               *tview.Table
+	trashFiles               []trashFile
+	cacheTable               *tview.Table
+	cacheOptions             []cacheOption
+	logsTable                *tview.Table
+	logOptions               []logOption
 
 	// System detection
-	isCachyOS bool
-	aurHelper string
+	isCachyOS                bool
+	aurHelper                string
 
 	// State
-	activeTab      int
-	lastSearchTerm string
-	shownPackages  []pkgmgr.Package
-	selectedPkg    *pkgmgr.Package
+	activeTab                int
+	lastSearchTerm           string
+	shownPackages            []pkgmgr.Package
+	selectedPkg              *pkgmgr.Package
 
 	// Fast Search Cache & Debouncing
-	searchMutex  sync.Mutex
-	searchCancel context.CancelFunc
-	searchTimer  *time.Timer
-	pkgsCache    []cachedPkg
+	searchMutex              sync.Mutex
+	searchCancel             context.CancelFunc
+	searchTimer              *time.Timer
+	pkgsCache                []cachedPkg
 
 	// Visual Mode State
-	inVisualMode    bool
-	visualStartRow  int
-	visualEndRow    int
-	selectedInstall map[string]bool
-	isRendering     bool
+	inVisualMode             bool
+	visualStartRow           int
+	visualEndRow             int
+	selectedInstall          map[string]bool
+	isRendering              bool
 	statusMessage            string
 	confirmationFocusedIndex int
 	lastKeyWasG              bool
 }
 
-
+// New initializes the UI with the given configuration and sets up the layout and event handlers
 func New(conf *config.Settings) (*UI, error) {
 	ui := &UI{
 		theme:               DefaultTheme,
 		conf:                conf,
 		app:                 tview.NewApplication(),
-		activeTab:           0,
+		activeTab:           tabInstall,
 		updateDetailsCache:  make(map[string]string),
 		installDetailsCache: make(map[string]string),
 		selectedInstall:     make(map[string]bool),
@@ -163,7 +164,7 @@ func New(conf *config.Settings) (*UI, error) {
 	tview.Styles.TertiaryTextColor = tcell.ColorDefault
 
 	var err error
-	ui.alpmHandle, err = pkgmgr.InitPacmanDbs(conf.PacmanDBPath, conf.PacmanConfigPath)
+	ui.alpmHandle, err = pkgmgr.InitPacmanDbs()
 	if err != nil {
 		return nil, fmt.Errorf("failed to init pacman db: %w", err)
 	}
@@ -178,7 +179,7 @@ func New(conf *config.Settings) (*UI, error) {
 	return ui, nil
 }
 
-
+// detectSystemConfig probes the filesystem for OS release info and available AUR helpers
 func (ui *UI) detectSystemConfig() {
 	ui.isCachyOS = false
 	if data, err := os.ReadFile("/etc/os-release"); err == nil {
@@ -216,21 +217,21 @@ func (ui *UI) detectSystemConfig() {
 	}
 }
 
-
+// Start initializes the TUI layout and enters the application main loop
 func (ui *UI) Start() error {
 	ui.drawTabBar()
 	ui.app.SetRoot(ui.grid, true).EnableMouse(true)
 	return ui.app.Run()
 }
 
-
+// reinitPacmanDbs releases the current alpm handle and reloads the pacman databases
 func (ui *UI) reinitPacmanDbs() error {
 	ui.alpmMutex.Lock()
 	if ui.alpmHandle != nil {
 		_ = ui.alpmHandle.Release()
 	}
 	var err error
-	ui.alpmHandle, err = pkgmgr.InitPacmanDbs(ui.conf.PacmanDBPath, ui.conf.PacmanConfigPath)
+	ui.alpmHandle, err = pkgmgr.InitPacmanDbs()
 	ui.alpmMutex.Unlock()
 
 	if err == nil {
@@ -239,7 +240,7 @@ func (ui *UI) reinitPacmanDbs() error {
 	return err
 }
 
-
+// rebuildCache refreshes the local and sync package databases and updates the search cache
 func (ui *UI) rebuildCache() {
 	ui.alpmMutex.Lock()
 	defer ui.alpmMutex.Unlock()
@@ -297,7 +298,7 @@ func (ui *UI) rebuildCache() {
 	ui.pkgsCache = cache
 }
 
-
+// setupWidgets initializes all TUI components for the interface
 func (ui *UI) setupWidgets() {
 	// Tab bar
 	ui.tabBar = tview.NewTextView().
@@ -306,36 +307,37 @@ func (ui *UI) setupWidgets() {
 
 	// Tab 1 Widgets
 	ui.searchField = tview.NewInputField().
-		SetLabel("Search: ").
+		SetLabel(" > ").
 		SetLabelColor(ui.theme.PrimaryColor).
 		SetFieldTextColor(tcell.ColorDefault).
 		SetFieldBackgroundColor(tcell.ColorDefault)
-	ui.searchField.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor)
+	ui.searchField.SetBorder(false)
 	ui.searchField.SetChangedFunc(func(text string) {
 		ui.handleSearchChange(text)
 	})
-	ui.setupFocusBorder(ui.searchField)
+	ui.searchField.SetFocusFunc(func() {
+		if ui.installLeftFlex != nil {
+			ui.installLeftFlex.SetBorderColor(ui.theme.FocusedBorderColor)
+		}
+	})
+	ui.searchField.SetBlurFunc(func() {
+		if ui.installLeftFlex != nil {
+			ui.installLeftFlex.SetBorderColor(ui.theme.UnfocusedBorderColor)
+		}
+	})
 
 	ui.pkgTable = tview.NewTable().
 		SetSelectable(true, false).
 		SetFixed(1, 0)
 	ui.pkgTable.SetSelectedStyle(tcell.StyleDefault.Background(ui.theme.PrimaryColor).Foreground(ui.theme.SelectedTextColor).Attributes(tcell.AttrBold))
-	ui.pkgTable.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor)
-	ui.setupFocusBorder(ui.pkgTable)
+	ui.pkgTable.SetBorder(false)
+	ui.pkgTable.SetFocusFunc(func() {
+		ui.app.SetFocus(ui.searchField)
+	})
 
-	ui.detailsView = tview.NewTextView().
-		SetDynamicColors(true).
-		SetWrap(true).
-		SetWordWrap(true)
-	ui.detailsView.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Details ")
-	ui.setupFocusBorder(ui.detailsView)
+	ui.detailsView = ui.createStandardTextView(" Details ", true)
 
-	ui.selectedTable = tview.NewTable().
-		SetSelectable(true, false).
-		SetFixed(1, 0)
-	ui.selectedTable.SetSelectedStyle(tcell.StyleDefault.Background(ui.theme.PrimaryColor).Foreground(ui.theme.SelectedTextColor).Attributes(tcell.AttrBold))
-	ui.selectedTable.SetBorder(true).SetTitle(" Selected Packages (0) ")
-	ui.setupFocusBorder(ui.selectedTable)
+	ui.selectedTable = ui.createStandardTable(" Selected Packages (0) ", 1, 0)
 
 	ui.statusText = tview.NewTextView().
 		SetDynamicColors(true)
@@ -345,10 +347,6 @@ func (ui *UI) setupWidgets() {
 		if ui.isRendering {
 			return
 		}
-		if ui.inVisualMode {
-			ui.visualEndRow = row
-			ui.renderPackageTable()
-		}
 		if row <= 0 || row > len(ui.shownPackages) {
 			ui.selectedPkg = nil
 			if ui.detailsView != nil {
@@ -356,6 +354,7 @@ func (ui *UI) setupWidgets() {
 			}
 			return
 		}
+		ui.updateTableFuzzyHighlights(row)
 		pkg := ui.shownPackages[row-1]
 		ui.selectedPkg = &pkg
 		ui.loadPackageDetails(pkg)
@@ -365,20 +364,36 @@ func (ui *UI) setupWidgets() {
 	ui.setupHelpPopup()
 }
 
-
+// setupLayout arranges the main grid and organizes pages for the TUI application
 func (ui *UI) setupLayout() {
 	ui.pages = tview.NewPages()
 
 	// Tab 1: Installation Page
-	installFlex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(ui.searchField, 3, 0, true).
+	ui.installLeftFlex = tview.NewFlex().SetDirection(tview.FlexRow)
+	ui.installLeftFlex.SetBorder(true).
+		SetTitle(" Search ").
+		SetBorderColor(ui.theme.UnfocusedBorderColor)
+	ui.installLeftFlex.SetBorderPadding(1, 1, 2, 2)
+
+	separator := tview.NewBox().SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
+		color := ui.theme.NeutralGrayColor
+		style := tcell.StyleDefault.Foreground(color)
+		for i := x + 2; i < x+width-2; i++ {
+			screen.SetContent(i, y, '─', nil, style)
+		}
+		return x, y, width, height
+	})
+
+	ui.installLeftFlex.
+		AddItem(ui.searchField, 1, 0, true).
+		AddItem(separator, 1, 0, false).
 		AddItem(ui.pkgTable, 0, 1, false)
 
 	ui.installRightFlex = tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(ui.detailsView, 0, 1, false)
 
 	installPage := tview.NewFlex().SetDirection(tview.FlexColumn).
-		AddItem(installFlex, 0, 1, true).
+		AddItem(ui.installLeftFlex, 0, 1, true).
 		AddItem(ui.installRightFlex, 0, 1, false)
 
 	// Tab 3: Package Maintenance Section
@@ -400,17 +415,7 @@ func (ui *UI) setupLayout() {
 		AddItem(ui.statusText, 2, 0, 1, 1, 0, 0, false)
 }
 
-// setupFocusBorder binds focus and blur handlers to change the border color to the focus color.
-func (ui *UI) setupFocusBorder(widget FocusBorderable) {
-	widget.SetFocusFunc(func() {
-		widget.SetBorderColor(ui.theme.FocusedBorderColor)
-	})
-	widget.SetBlurFunc(func() {
-		widget.SetBorderColor(ui.theme.UnfocusedBorderColor)
-	})
-}
-
-
+// drawTabBar renders the tab navigation bar with the current active tab highlighted
 func (ui *UI) drawTabBar() {
 	tabs := []string{"[1] Install", "[2] Update", "[3] Maintenance"}
 	var styledTabs []string
@@ -424,41 +429,41 @@ func (ui *UI) drawTabBar() {
 	ui.tabBar.SetText(strings.Join(styledTabs, "   "))
 }
 
-
+// switchTab transitions between the main application modules and updates the focus
 func (ui *UI) switchTab(tabIndex int) {
-	if tabIndex < 0 || tabIndex > 2 {
+	if tabIndex < 0 || tabIndex >= tabCount {
 		return
 	}
 	ui.activeTab = tabIndex
 	ui.drawTabBar()
 
 	switch tabIndex {
-	case 0:
+	case tabInstall:
 		ui.pages.SwitchToPage("install")
 		ui.app.SetFocus(ui.searchField)
-	case 1:
+	case tabUpdate:
 		ui.pages.SwitchToPage("update")
 		ui.app.SetFocus(ui.updateTable)
 		ui.checkForUpdates()
-	case 2:
+	case tabManage:
 		ui.pages.SwitchToPage("manage")
 		ui.app.SetFocus(ui.manageTable)
 	}
 }
 
-
+// restoreFocusToActiveTab returns the input focus to the active tab's primary widget
 func (ui *UI) restoreFocusToActiveTab() {
 	switch ui.activeTab {
-	case 0:
+	case tabInstall:
 		ui.app.SetFocus(ui.searchField)
-	case 1:
+	case tabUpdate:
 		ui.app.SetFocus(ui.updateTable)
-	case 2:
+	case tabManage:
 		ui.app.SetFocus(ui.manageTable)
 	}
 }
 
-
+// setupKeyboard configures global and component-specific keyboard input handlers
 func (ui *UI) setupKeyboard() {
 	// Global captures
 	ui.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -550,15 +555,15 @@ func (ui *UI) setupKeyboard() {
 
 		// F-keys or Alt/Ctrl numbers to switch tabs
 		if event.Key() == tcell.KeyF1 {
-			ui.switchTab(0)
+			ui.switchTab(tabInstall)
 			return nil
 		}
 		if event.Key() == tcell.KeyF2 {
-			ui.switchTab(1)
+			ui.switchTab(tabUpdate)
 			return nil
 		}
 		if event.Key() == tcell.KeyF3 {
-			ui.switchTab(2)
+			ui.switchTab(tabManage)
 			return nil
 		}
 		if event.Key() == tcell.KeyF4 {
@@ -568,11 +573,11 @@ func (ui *UI) setupKeyboard() {
 			return nil
 		}
 		if event.Rune() == '[' {
-			ui.switchTab((ui.activeTab + 2) % 3)
+			ui.switchTab((ui.activeTab + tabCount - 1) % tabCount)
 			return nil
 		}
 		if event.Rune() == ']' {
-			ui.switchTab((ui.activeTab + 1) % 3)
+			ui.switchTab((ui.activeTab + 1) % tabCount)
 			return nil
 		}
 
@@ -580,48 +585,41 @@ func (ui *UI) setupKeyboard() {
 	})
 
 	// Search input captured
-	ui.searchField.SetDoneFunc(func(key tcell.Key) {
-		switch key {
+	ui.searchField.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyTab:
+			ui.app.SetFocus(ui.detailsView)
+			return nil
+		case tcell.KeyBacktab:
+			ui.app.SetFocus(ui.detailsView)
+			return nil
+		case tcell.KeyDown:
+			ui.moveSelectionDown()
+			return nil
+		case tcell.KeyUp:
+			ui.moveSelectionUp()
+			return nil
+		case tcell.KeyCtrlN:
+			ui.moveSelectionDown()
+			return nil
+		case tcell.KeyCtrlP:
+			ui.moveSelectionUp()
+			return nil
 		case tcell.KeyEnter:
 			term := strings.TrimSpace(ui.searchField.GetText())
-			ui.forceSearch(term)
-		case tcell.KeyTAB, tcell.KeyDown:
-			ui.app.SetFocus(ui.pkgTable)
-		case tcell.KeyBacktab:
-			if ui.installRightFlex != nil && ui.installRightFlex.GetItemCount() == 2 {
-				ui.app.SetFocus(ui.selectedTable)
-			} else {
-				ui.app.SetFocus(ui.detailsView)
+			if term != "" {
+				ui.attemptInstallExact(term)
 			}
+			return nil
 		}
+		return event
 	})
 
 	// Table list captured
 	ui.pkgTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyRune {
-			r := event.Rune()
-			switch r {
-			case 'g':
-				if ui.lastKeyWasG {
-					if len(ui.shownPackages) > 0 {
-						ui.pkgTable.ScrollToBeginning()
-						ui.pkgTable.Select(1, 0)
-					}
-					ui.lastKeyWasG = false
-				} else {
-					ui.lastKeyWasG = true
-				}
-				return nil
-			case 'G':
-				if len(ui.shownPackages) > 0 {
-					ui.pkgTable.ScrollToEnd()
-					ui.pkgTable.Select(len(ui.shownPackages), 0)
-				}
-				ui.lastKeyWasG = false
-				return nil
-			}
+		if ui.handleTableVimNavigation(event, ui.pkgTable, len(ui.shownPackages)) {
+			return nil
 		}
-		ui.lastKeyWasG = false
 
 		if event.Key() == tcell.KeyTAB {
 			ui.app.SetFocus(ui.detailsView)
@@ -639,17 +637,11 @@ func (ui *UI) setupKeyboard() {
 				return nil
 			}
 		}
-		if event.Key() == tcell.KeyRune && (event.Rune() == 'v' || event.Rune() == 'V') {
-			ui.inVisualMode = !ui.inVisualMode
-			if ui.inVisualMode {
-				row, _ := ui.pkgTable.GetSelection()
-				ui.visualStartRow = row
-				ui.visualEndRow = row
-			}
-			ui.updateStatusDisplay()
-			ui.renderPackageTable()
+
+		if ui.handleVisualModeToggle(event, ui.pkgTable, ui.renderPackageTable) {
 			return nil
 		}
+
 		if event.Key() == tcell.KeyRune && event.Rune() == ' ' {
 			if ui.inVisualMode {
 				minRow := min(ui.visualStartRow, ui.visualEndRow)
@@ -763,39 +755,13 @@ func (ui *UI) setupKeyboard() {
 	})
 }
 
-
-func (ui *UI) showSettingsPopup() {
-	ui.settingsPopupOpen = true
-	ui.settingInputs[0].SetText(ui.conf.PackagesPath)
-	ui.settingInputs[1].SetText(ui.conf.PackagesFile)
-	ui.settingInputs[2].SetText(ui.conf.PacmanDBPath)
-	ui.settingInputs[3].SetText(ui.conf.PacmanConfigPath)
-	ui.settingInputs[4].SetText(ui.conf.InstallCommand)
-	ui.settingInputs[5].SetText(ui.conf.UninstallCommand)
-	ui.settingInputs[6].SetText(ui.conf.SysUpgradeCmd)
-	ui.settingInputs[7].SetText(strconv.Itoa(ui.conf.MaxResults))
-	ui.settingAurCb.SetChecked(ui.conf.DisableAur)
-	ui.settingHooksCb.SetChecked(ui.conf.RunUpdateHooks)
-	ui.updateSettingsDisplay()
-
-	ui.pages.ShowPage("settings")
-	ui.app.SetFocus(ui.settingsGrid)
-}
-
-
-func (ui *UI) closeSettingsPopup() {
-	ui.settingsPopupOpen = false
-	ui.pages.HidePage("settings")
-	ui.restoreFocusToActiveTab()
-}
-
-
+// setStatus updates the current status message and refreshes the status bar display
 func (ui *UI) setStatus(msg string) {
 	ui.statusMessage = msg
 	ui.updateStatusDisplay()
 }
 
-
+// updateStatusDisplay refreshes the status bar text based on current mode and messages
 func (ui *UI) updateStatusDisplay() {
 	prefix := ""
 	if ui.inVisualMode {
@@ -804,7 +770,7 @@ func (ui *UI) updateStatusDisplay() {
 	ui.statusText.SetText(prefix + ui.statusMessage)
 }
 
-
+// getSourceColor maps package repository names to corresponding display colors
 func getSourceColor(source string) tcell.Color {
 	switch strings.ToLower(source) {
 	case "core":
@@ -834,7 +800,7 @@ func getSourceColor(source string) tcell.Color {
 	}
 }
 
-
+// getSelectedInstallPackages retrieves a sorted list of names for all currently selected packages
 func (ui *UI) getSelectedInstallPackages() []string {
 	var pkgs []string
 	for name, selected := range ui.selectedInstall {
@@ -844,4 +810,49 @@ func (ui *UI) getSelectedInstallPackages() []string {
 	}
 	sort.Strings(pkgs)
 	return pkgs
+}
+
+// handleTableVimNavigation processes Vim-like 'gg' top and 'G' bottom scrolling for tables
+func (ui *UI) handleTableVimNavigation(event *tcell.EventKey, table *tview.Table, numItems int) bool {
+	if event.Key() == tcell.KeyRune {
+		r := event.Rune()
+		switch r {
+		case 'g':
+			if ui.lastKeyWasG {
+				if numItems > 0 {
+					table.ScrollToBeginning()
+					table.Select(1, 0)
+				}
+				ui.lastKeyWasG = false
+			} else {
+				ui.lastKeyWasG = true
+			}
+			return true
+		case 'G':
+			if numItems > 0 {
+				table.ScrollToEnd()
+				table.Select(numItems, 0)
+			}
+			ui.lastKeyWasG = false
+			return true
+		}
+	}
+	ui.lastKeyWasG = false
+	return false
+}
+
+// handleVisualModeToggle toggles visual range selection mode and initializes the starting row
+func (ui *UI) handleVisualModeToggle(event *tcell.EventKey, table *tview.Table, renderFunc func()) bool {
+	if event.Key() == tcell.KeyRune && (event.Rune() == 'v' || event.Rune() == 'V') {
+		ui.inVisualMode = !ui.inVisualMode
+		if ui.inVisualMode {
+			row, _ := table.GetSelection()
+			ui.visualStartRow = row
+			ui.visualEndRow = row
+		}
+		ui.updateStatusDisplay()
+		renderFunc()
+		return true
+	}
+	return false
 }

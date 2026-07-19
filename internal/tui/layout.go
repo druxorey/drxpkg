@@ -10,21 +10,156 @@ import (
 
 	"github.com/druxorey/drxpkg/internal/pkgmgr"
 	"github.com/druxorey/drxpkg/internal/util"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 )
 
+// Standard panel padding values
+const (
+	tablePaddingTop    = 1
+	tablePaddingBottom = 1
+	tablePaddingLeft   = 2
+	tablePaddingRight  = 2
 
+	textPaddingTop    = 1
+	textPaddingBottom = 1
+	textPaddingLeft   = 2
+	textPaddingRight  = 2
+)
+
+// TUI Tab Indices
+const (
+	tabInstall = 0
+	tabUpdate  = 1
+	tabManage  = 2
+	tabCount   = 3
+)
+
+// Install Package Table Columns
+const (
+	installColInst = iota
+	installColPackage
+	installColSource
+	installColVotes
+)
+
+// Update Table Columns
+const (
+	updateColSelect = iota
+	updateColPackage
+	updateColCurrent
+	updateColArrow
+	updateColNew
+	updateColSource
+)
+
+// Maintenance Menu Items
+const (
+	manageItemTrash = iota
+	manageItemCache
+	manageItemLogs
+	manageItemSeparator
+	manageItemLockFile
+	manageItemMirrors
+)
+
+// Settings Item Indices
+const (
+	settingIdxSavePath = iota
+	settingIdxFileName
+	settingIdxInstallCmd
+	settingIdxUninstallCmd
+	settingIdxUpgradeCmd
+	settingIdxMaxResults
+	settingIdxAurCb
+	settingIdxHooksCb
+	settingIdxBtnSave
+	settingIdxBtnDefaults
+	settingNumItems
+)
+
+// applyStandardBorder configures the border, title, and color of a tview.Box based on the theme.
+func (ui *UI) applyStandardBorder(box *tview.Box, title string) {
+	box.SetBorder(true).
+		SetTitle(title).
+		SetBorderColor(ui.theme.UnfocusedBorderColor).
+		SetTitleColor(ui.theme.PrimaryColor)
+}
+
+// setupFocusBorder attaches focus and blur callbacks to shift border colors between focused and unfocused theme colors.
+func (ui *UI) setupFocusBorder(widget FocusBorderable) {
+	widget.SetFocusFunc(func() {
+		widget.SetBorderColor(ui.theme.FocusedBorderColor)
+	})
+	widget.SetBlurFunc(func() {
+		widget.SetBorderColor(ui.theme.UnfocusedBorderColor)
+	})
+}
+
+// createStandardTable constructs a styled table widget using the default configuration.
+func (ui *UI) createStandardTable(title string, fixedRows, fixedCols int) *tview.Table {
+	table := tview.NewTable().
+		SetSelectable(true, false).
+		SetFixed(fixedRows, fixedCols)
+	
+	table.SetSelectedStyle(tcell.StyleDefault.
+		Background(ui.theme.PrimaryColor).
+		Foreground(ui.theme.SelectedTextColor).
+		Attributes(tcell.AttrBold))
+	
+	ui.applyStandardBorder(table.Box, title)
+	table.SetBorderPadding(tablePaddingTop, tablePaddingBottom, tablePaddingLeft, tablePaddingRight)
+	ui.setupFocusBorder(table)
+	
+	return table
+}
+
+// createStandardTextView constructs a styled text view widget using the default configuration.
+func (ui *UI) createStandardTextView(title string, wrap bool) *tview.TextView {
+	tv := tview.NewTextView().
+		SetDynamicColors(true).
+		SetWrap(wrap).
+		SetWordWrap(wrap)
+	
+	ui.applyStandardBorder(tv.Box, title)
+	tv.SetBorderPadding(textPaddingTop, textPaddingBottom, textPaddingLeft, textPaddingRight)
+	ui.setupFocusBorder(tv)
+	
+	return tv
+}
+
+// createCenteredGrid wraps a primitive in a centered 3x3 grid layout with specified dimensions.
+func (ui *UI) createCenteredGrid(primitive tview.Primitive, width, height int) *tview.Grid {
+	return tview.NewGrid().
+		SetRows(0, height, 0).
+		SetColumns(0, width, 0).
+		AddItem(primitive, 1, 1, 1, 1, 0, 0, true)
+}
+
+// createStyledModal creates a tview.Modal preconfigured with theme-compliant colors.
+func (ui *UI) createStyledModal(message string, buttons []string, doneFunc func(int, string)) *tview.Modal {
+	modal := tview.NewModal().
+		SetText(message).
+		AddButtons(buttons).
+		SetDoneFunc(doneFunc)
+	
+	modal.SetBackgroundColor(tcell.ColorBlack)
+	modal.SetTextColor(tcell.ColorDefault)
+	modal.SetButtonBackgroundColor(ui.theme.SelectedTextColor)
+	modal.SetButtonTextColor(ui.theme.PrimaryColor)
+	
+	return modal
+}
+
+// runDiff runs `diff -u` on two string buffers using temporary files, correctly cleaning up resources.
 func runDiff(localContent, remoteContent string) (string, error) {
 	tmpLocal, err := os.CreateTemp("", "drxpkg-local-")
 	if err != nil {
 		return "", err
 	}
 	defer func() {
-		if err := tmpLocal.Close(); err != nil {
-			util.PrintError("Failed to close response body: %v", err)
-		}
-		if err := os.Remove(tmpLocal.Name()); err != nil {
-			util.PrintError("Failed to remove temporary file %s: %v", tmpLocal.Name(), err)
-		}
+		_ = tmpLocal.Close()
+		_ = os.Remove(tmpLocal.Name())
 	}()
 
 	if _, err := tmpLocal.WriteString(localContent); err != nil {
@@ -36,12 +171,8 @@ func runDiff(localContent, remoteContent string) (string, error) {
 		return "", err
 	}
 	defer func() {
-		if err := tmpLocal.Close(); err != nil {
-			util.PrintError("Failed to close response body: %v", err)
-		}
-		if err := os.Remove(tmpLocal.Name()); err != nil {
-			util.PrintError("Failed to remove temporary file %s: %v", tmpLocal.Name(), err)
-		}
+		_ = tmpRemote.Close()
+		_ = os.Remove(tmpRemote.Name())
 	}()
 
 	if _, err := tmpRemote.WriteString(remoteContent); err != nil {
@@ -89,7 +220,7 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 	}
 
 	if record.OutOfDate > 0 {
-		boxWidth := max(width - 2, 40)
+		boxWidth := max(width-2, 40)
 		fillLine := func(text string) string {
 			if len(text) > boxWidth {
 				text = text[:boxWidth]
@@ -173,10 +304,10 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 
 	// Helper to print centered title and a solid yellow horizontal line
 	printDivider := func(title string) {
-		w := max(width - 2, 40)
+		w := max(width-2, 40)
 		padding := max(((w - len(title)) / 2), 0)
 		centerTitle := strings.Repeat(" ", padding) + title
-		
+
 		fmt.Fprintf(&sb, "\n[-:-:-][yellow]%s[-:-:-]\n", centerTitle)
 		fmt.Fprintf(&sb, "[yellow]%s[-:-:-]\n", strings.Repeat("─", w))
 	}
@@ -212,7 +343,7 @@ func (ui *UI) FetchAndBuildDetails(name, source string) string {
 
 	if resolvedSource == "AUR" {
 		isDifferentVersion := record.LocalVersion != "" && record.LocalVersion != record.Version
-		
+
 		var showDiff bool
 		var diffOut string
 		var err error

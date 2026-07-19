@@ -40,7 +40,7 @@ type logOption struct {
 	RequiresSudo bool
 }
 
-
+// getTrashFiles scans the user's local trash directory and returns a slice of trashFile objects
 func getTrashFiles() []trashFile {
 	trashPath := filepath.Join(os.Getenv("HOME"), ".local/share/Trash/files")
 	files, err := os.ReadDir(trashPath)
@@ -62,7 +62,7 @@ func getTrashFiles() []trashFile {
 	return list
 }
 
-
+// formatSize converts a byte count into a human-readable string using SI prefixes
 func formatSize(bytes int64) string {
 	const unit = 1024
 	if bytes < unit {
@@ -76,7 +76,7 @@ func formatSize(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
-
+// getCacheOptions returns a list of available cache cleaning tasks based on installed software
 func (ui *UI) getCacheOptions() []cacheOption {
 	var options []cacheOption
 
@@ -192,7 +192,7 @@ func (ui *UI) getCacheOptions() []cacheOption {
 	return options
 }
 
-
+// getLogOptions returns a list of available system and user log cleaning tasks
 func (ui *UI) getLogOptions() []logOption {
 	var options []logOption
 
@@ -242,15 +242,10 @@ func (ui *UI) getLogOptions() []logOption {
 	return options
 }
 
-
+// setupMaintenanceSection initializes the maintenance UI layout, including menus and sub-panels
 func (ui *UI) setupMaintenanceSection() tview.Primitive {
 	// Initialize Left Menu Table
-	ui.manageTable = tview.NewTable().
-		SetSelectable(true, false).
-		SetFixed(0, 0)
-	ui.manageTable.SetSelectedStyle(tcell.StyleDefault.Background(ui.theme.PrimaryColor).Foreground(ui.theme.SelectedTextColor).Attributes(tcell.AttrBold))
-	ui.manageTable.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Menu ")
-	ui.setupFocusBorder(ui.manageTable)
+	ui.manageTable = ui.createStandardTable(" Menu ", 0, 0)
 
 	menuItems := []string{
 		"Trash",
@@ -274,12 +269,7 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 	}
 
 	// 1) Trash sub-panel
-	ui.trashTable = tview.NewTable().
-		SetSelectable(true, false).
-		SetFixed(1, 0)
-	ui.trashTable.SetSelectedStyle(tcell.StyleDefault.Background(ui.theme.PrimaryColor).Foreground(ui.theme.SelectedTextColor).Attributes(tcell.AttrBold))
-	ui.trashTable.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Trash Files ")
-	ui.setupFocusBorder(ui.trashTable)
+	ui.trashTable = ui.createStandardTable(" Trash Files ", 1, 0)
 
 	trashStatus := tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignCenter)
 	trashStatus.SetText("[yellow]Space[-]: Select  |  [yellow]v[-]: Visual Mode  |  [yellow]d[-]: Delete Selected  |  [yellow]TAB[-]: Back to Menu")
@@ -289,19 +279,8 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 		AddItem(trashStatus, 1, 0, false)
 
 	// 2) Cache sub-panel
-	ui.cacheTable = tview.NewTable().
-		SetSelectable(true, false).
-		SetFixed(1, 0)
-	ui.cacheTable.SetSelectedStyle(tcell.StyleDefault.Background(ui.theme.PrimaryColor).Foreground(ui.theme.SelectedTextColor).Attributes(tcell.AttrBold))
-	ui.cacheTable.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Cache Clean Options ")
-	ui.setupFocusBorder(ui.cacheTable)
-
-	cacheDesc := tview.NewTextView().
-		SetDynamicColors(true).
-		SetWrap(true).
-		SetWordWrap(true)
-	cacheDesc.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Description ")
-	ui.setupFocusBorder(cacheDesc)
+	ui.cacheTable = ui.createStandardTable(" Cache Clean Options ", 1, 0)
+	cacheDesc := ui.createStandardTextView(" Description ", true)
 
 	ui.cacheTable.SetSelectionChangedFunc(func(row, column int) {
 		if row <= 0 || row > len(ui.cacheOptions) {
@@ -321,19 +300,8 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 		AddItem(cacheDesc, 7, 0, false)
 
 	// 3) Logs sub-panel
-	ui.logsTable = tview.NewTable().
-		SetSelectable(true, false).
-		SetFixed(1, 0)
-	ui.logsTable.SetSelectedStyle(tcell.StyleDefault.Background(ui.theme.PrimaryColor).Foreground(ui.theme.SelectedTextColor).Attributes(tcell.AttrBold))
-	ui.logsTable.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Logs Clean Options ")
-	ui.setupFocusBorder(ui.logsTable)
-
-	logsDesc := tview.NewTextView().
-		SetDynamicColors(true).
-		SetWrap(true).
-		SetWordWrap(true)
-	logsDesc.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Description ")
-	ui.setupFocusBorder(logsDesc)
+	ui.logsTable = ui.createStandardTable(" Logs Clean Options ", 1, 0)
+	logsDesc := ui.createStandardTextView(" Description ", true)
 
 	ui.logsTable.SetSelectionChangedFunc(func(row, column int) {
 		if row <= 0 || row > len(ui.logOptions) {
@@ -361,7 +329,8 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 
 	// Center-aligned explanation box container
 	detailsContainer := tview.NewFlex().SetDirection(tview.FlexRow)
-	detailsContainer.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Task Details ")
+	ui.applyStandardBorder(detailsContainer.Box, " Task Details ")
+	detailsContainer.SetBorderPadding(textPaddingTop, textPaddingBottom, textPaddingLeft, textPaddingRight)
 	ui.setupFocusBorder(detailsContainer)
 
 	detailsContainer.
@@ -379,12 +348,12 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 	// Input captures
 	var lastSelectedLeftRow = 0
 	ui.manageTable.SetSelectionChangedFunc(func(row, column int) {
-		if row == 3 {
+		if row == manageItemSeparator {
 			switch lastSelectedLeftRow {
-			case 2:
-				ui.manageTable.Select(4, 0)
-			case 4:
-				ui.manageTable.Select(2, 0)
+			case manageItemLogs:
+				ui.manageTable.Select(manageItemLockFile, 0)
+			case manageItemLockFile:
+				ui.manageTable.Select(manageItemLogs, 0)
 			}
 			return
 		}
@@ -394,14 +363,17 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 
 	ui.manageTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		row, _ := ui.manageTable.GetSelection()
+		if ui.handleTableVimNavigation(event, ui.manageTable, len(menuItems)) {
+			return nil
+		}
 		if event.Key() == tcell.KeyTAB {
-			if row >= 0 && row <= 2 {
+			if row >= manageItemTrash && row <= manageItemLogs {
 				switch row {
-				case 0:
+				case manageItemTrash:
 					ui.app.SetFocus(ui.trashTable)
-				case 1:
+				case manageItemCache:
 					ui.app.SetFocus(ui.cacheTable)
-				case 2:
+				case manageItemLogs:
 					ui.app.SetFocus(ui.logsTable)
 				}
 			}
@@ -409,13 +381,13 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 		}
 		if event.Key() == tcell.KeyEnter {
 			switch row {
-			case 4:
+			case manageItemLockFile:
 				ui.promptMaintenance(maintenanceTask{
 					Name:         "Fix Pacman Database Lock File",
 					Command:      "sudo rm -f /var/lib/pacman/db.lck",
 					RequiresSudo: true,
 				})
-			case 5:
+			case manageItemMirrors:
 				cmd := "rate-mirrors arch | sudo tee /etc/pacman.d/mirrorlist"
 				if ui.isCachyOS {
 					cmd = "cachyrate-mirrors"
@@ -443,6 +415,9 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 
 	ui.trashTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		row, _ := ui.trashTable.GetSelection()
+		if ui.handleTableVimNavigation(event, ui.trashTable, len(ui.trashFiles)) {
+			return nil
+		}
 		if event.Key() == tcell.KeyTAB || event.Key() == tcell.KeyBacktab {
 			ui.app.SetFocus(ui.manageTable)
 			return nil
@@ -455,14 +430,7 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 				return nil
 			}
 		}
-		if event.Key() == tcell.KeyRune && (event.Rune() == 'v' || event.Rune() == 'V') {
-			ui.inVisualMode = !ui.inVisualMode
-			if ui.inVisualMode {
-				ui.visualStartRow = row
-				ui.visualEndRow = row
-			}
-			ui.updateStatusDisplay()
-			ui.renderTrashTable()
+		if ui.handleVisualModeToggle(event, ui.trashTable, ui.renderTrashTable) {
 			return nil
 		}
 		if event.Key() == tcell.KeyRune && event.Rune() == ' ' {
@@ -495,6 +463,9 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 
 	ui.cacheTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		row, _ := ui.cacheTable.GetSelection()
+		if ui.handleTableVimNavigation(event, ui.cacheTable, len(ui.cacheOptions)) {
+			return nil
+		}
 		if event.Key() == tcell.KeyTAB || event.Key() == tcell.KeyBacktab {
 			ui.app.SetFocus(ui.manageTable)
 			return nil
@@ -510,6 +481,9 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 
 	ui.logsTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		row, _ := ui.logsTable.GetSelection()
+		if ui.handleTableVimNavigation(event, ui.logsTable, len(ui.logOptions)) {
+			return nil
+		}
 		if event.Key() == tcell.KeyTAB || event.Key() == tcell.KeyBacktab {
 			ui.app.SetFocus(ui.manageTable)
 			return nil
@@ -533,37 +507,37 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 	return ui.manageFlex
 }
 
-
+// updateMaintenanceRightPanel updates the right-hand panel view based on the selected menu item
 func (ui *UI) updateMaintenanceRightPanel(row int) {
 	if ui.managePages == nil {
 		return
 	}
 	switch row {
-	case 0:
+	case manageItemTrash:
 		ui.trashFiles = getTrashFiles()
 		ui.renderTrashTable()
 		ui.managePages.SwitchToPage("trash")
 		if len(ui.trashFiles) > 0 {
 			ui.trashTable.Select(1, 0)
 		}
-	case 1:
+	case manageItemCache:
 		ui.cacheOptions = ui.getCacheOptions()
 		ui.renderCacheTable()
 		ui.managePages.SwitchToPage("cache")
 		if len(ui.cacheOptions) > 0 {
 			ui.cacheTable.Select(1, 0)
 		}
-	case 2:
+	case manageItemLogs:
 		ui.logOptions = ui.getLogOptions()
 		ui.renderLogsTable()
 		ui.managePages.SwitchToPage("logs")
 		if len(ui.logOptions) > 0 {
 			ui.logsTable.Select(1, 0)
 		}
-	case 4:
+	case manageItemLockFile:
 		ui.manageDetails.SetText("Fix Pacman Database Lock File\n\nRemoves /var/lib/pacman/db.lck.\nRun this if pacman or yay is locked due to a previous crash or interruption.\n\n[red]Requires Administrator Privileges (sudo)[-]\n\n[yellow::b]Press ENTER on the left menu to execute this task.[-]")
 		ui.managePages.SwitchToPage("details")
-	case 5:
+	case manageItemMirrors:
 		cmd := "rate-mirrors arch | sudo tee /etc/pacman.d/mirrorlist"
 		if ui.isCachyOS {
 			cmd = "cachyrate-mirrors"
@@ -573,7 +547,7 @@ func (ui *UI) updateMaintenanceRightPanel(row int) {
 	}
 }
 
-
+// renderTrashTable refreshes the trash files table content and visual selection states
 func (ui *UI) renderTrashTable() {
 	ui.isRendering = true
 	defer func() { ui.isRendering = false }()
@@ -633,7 +607,7 @@ func (ui *UI) renderTrashTable() {
 	}
 }
 
-
+// renderCacheTable updates the cache cleaning options table
 func (ui *UI) renderCacheTable() {
 	ui.cacheTable.Clear()
 	ui.cacheTable.SetCell(0, 0, tview.NewTableCell("Cache Option").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetExpansion(1))
@@ -650,7 +624,7 @@ func (ui *UI) renderCacheTable() {
 	}
 }
 
-
+// renderLogsTable updates the log cleaning options table
 func (ui *UI) renderLogsTable() {
 	ui.logsTable.Clear()
 	ui.logsTable.SetCell(0, 0, tview.NewTableCell("Log Option").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetExpansion(1))
@@ -667,7 +641,7 @@ func (ui *UI) renderLogsTable() {
 	}
 }
 
-
+// deleteSelectedTrash prompts the user for confirmation and removes selected files from the trash
 func (ui *UI) deleteSelectedTrash() {
 	var toDelete []trashFile
 	for _, tf := range ui.trashFiles {
@@ -703,7 +677,7 @@ func (ui *UI) deleteSelectedTrash() {
 	})
 }
 
-
+// promptCacheClean displays a confirmation dialog before executing a cache cleaning task
 func (ui *UI) promptCacheClean(opt cacheOption) {
 	message := fmt.Sprintf("Are you sure you want to clean: %s?", opt.Name)
 	ui.showConfirmation(message, func() {
@@ -717,7 +691,7 @@ func (ui *UI) promptCacheClean(opt cacheOption) {
 	})
 }
 
-
+// promptLogsClean displays a confirmation dialog before executing a log cleaning task
 func (ui *UI) promptLogsClean(opt logOption) {
 	message := fmt.Sprintf("Are you sure you want to clean logs: %s?", opt.Name)
 	ui.showConfirmation(message, func() {
@@ -731,7 +705,7 @@ func (ui *UI) promptLogsClean(opt logOption) {
 	})
 }
 
-
+// promptMaintenance verifies dependencies and prompts the user before running administrative tasks
 func (ui *UI) promptMaintenance(task maintenanceTask) {
 	if task.Name == "Update Package Mirrors (Benchmark)" {
 		binary := "rate-mirrors"
@@ -751,7 +725,7 @@ func (ui *UI) promptMaintenance(task maintenanceTask) {
 	})
 }
 
-
+// performMaintenance runs the given shell command, managing UI suspension and terminal restoration
 func (ui *UI) performMaintenance(task maintenanceTask) {
 	ui.app.Suspend(func() {
 		fmt.Print("\033[H\033[2J")

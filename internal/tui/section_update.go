@@ -18,22 +18,10 @@ import (
 	"github.com/rivo/tview"
 )
 
-
+// setupUpdatePage initializes the UI components and input handlers for the update page
 func (ui *UI) setupUpdatePage() {
-	ui.updateTable = tview.NewTable().
-		SetSelectable(true, false).
-		SetFixed(1, 0)
-	ui.updateTable.SetSelectedStyle(tcell.StyleDefault.Background(ui.theme.PrimaryColor).Foreground(ui.theme.SelectedTextColor).Attributes(tcell.AttrBold))
-	ui.updateTable.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Updates ")
-
-	ui.updateDetails = tview.NewTextView().
-		SetDynamicColors(true).
-		SetWrap(true).
-		SetWordWrap(true)
-	ui.updateDetails.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(" Details ")
-
-	ui.setupFocusBorder(ui.updateTable)
-	ui.setupFocusBorder(ui.updateDetails)
+	ui.updateTable = ui.createStandardTable(" Updates ", 1, 0)
+	ui.updateDetails = ui.createStandardTextView(" Details ", true)
 
 	ui.updateTable.SetSelectionChangedFunc(func(row, column int) {
 		if ui.isRendering {
@@ -56,30 +44,9 @@ func (ui *UI) setupUpdatePage() {
 	ui.updateTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		row, _ := ui.updateTable.GetSelection()
 
-		if event.Key() == tcell.KeyRune {
-			r := event.Rune()
-			switch r {
-			case 'g':
-				if ui.lastKeyWasG {
-					if len(ui.updatePackages) > 0 {
-						ui.updateTable.ScrollToBeginning()
-						ui.updateTable.Select(1, 0)
-					}
-					ui.lastKeyWasG = false
-				} else {
-					ui.lastKeyWasG = true
-				}
-				return nil
-			case 'G':
-				if len(ui.updatePackages) > 0 {
-					ui.updateTable.ScrollToEnd()
-					ui.updateTable.Select(len(ui.updatePackages), 0)
-				}
-				ui.lastKeyWasG = false
-				return nil
-			}
+		if ui.handleTableVimNavigation(event, ui.updateTable, len(ui.updatePackages)) {
+			return nil
 		}
-		ui.lastKeyWasG = false
 
 		if event.Key() == tcell.KeyTAB {
 			ui.app.SetFocus(ui.updateDetails)
@@ -93,17 +60,11 @@ func (ui *UI) setupUpdatePage() {
 				return nil
 			}
 		}
-		if event.Key() == tcell.KeyRune && (event.Rune() == 'v' || event.Rune() == 'V') {
-			ui.inVisualMode = !ui.inVisualMode
-			if ui.inVisualMode {
-				row, _ := ui.updateTable.GetSelection()
-				ui.visualStartRow = row
-				ui.visualEndRow = row
-			}
-			ui.updateStatusDisplay()
-			ui.renderUpdateTable()
+
+		if ui.handleVisualModeToggle(event, ui.updateTable, ui.renderUpdateTable) {
 			return nil
 		}
+
 		if event.Key() == tcell.KeyRune && event.Rune() == ' ' {
 			if ui.inVisualMode {
 				minRow := min(ui.visualStartRow, ui.visualEndRow)
@@ -169,7 +130,7 @@ func (ui *UI) setupUpdatePage() {
 		AddItem(ui.updateDetails, 0, 1, false)
 }
 
-
+// renderUpdateTable populates and renders the updates table with package information and status
 func (ui *UI) renderUpdateTable() {
 	ui.isRendering = true
 	defer func() { ui.isRendering = false }()
@@ -179,12 +140,12 @@ func (ui *UI) renderUpdateTable() {
 	ui.updateTable.Clear()
 
 	// Header row
-	ui.updateTable.SetCell(0, 0, tview.NewTableCell("").SetSelectable(false).SetMaxWidth(8))
-	ui.updateTable.SetCell(0, 1, tview.NewTableCell("Package").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetExpansion(1))
-	ui.updateTable.SetCell(0, 2, tview.NewTableCell("Current").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(20))
-	ui.updateTable.SetCell(0, 3, tview.NewTableCell("").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(4))
-	ui.updateTable.SetCell(0, 4, tview.NewTableCell("New").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(20))
-	ui.updateTable.SetCell(0, 5, tview.NewTableCell("Source").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
+	ui.updateTable.SetCell(0, updateColSelect, tview.NewTableCell("").SetSelectable(false).SetMaxWidth(8))
+	ui.updateTable.SetCell(0, updateColPackage, tview.NewTableCell("Package").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetExpansion(1))
+	ui.updateTable.SetCell(0, updateColCurrent, tview.NewTableCell("Current").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(20))
+	ui.updateTable.SetCell(0, updateColArrow, tview.NewTableCell("").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(4))
+	ui.updateTable.SetCell(0, updateColNew, tview.NewTableCell("New").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(20))
+	ui.updateTable.SetCell(0, updateColSource, tview.NewTableCell("Source").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
 
 	for idx, p := range ui.updatePackages {
 		row := idx + 1
@@ -253,12 +214,12 @@ func (ui *UI) renderUpdateTable() {
 			sourceCell.SetBackgroundColor(bgColor)
 		}
 
-		ui.updateTable.SetCell(row, 0, selCell)
-		ui.updateTable.SetCell(row, 1, pkgCell)
-		ui.updateTable.SetCell(row, 2, currCell)
-		ui.updateTable.SetCell(row, 3, arrowCell)
-		ui.updateTable.SetCell(row, 4, newCell)
-		ui.updateTable.SetCell(row, 5, sourceCell)
+		ui.updateTable.SetCell(row, updateColSelect, selCell)
+		ui.updateTable.SetCell(row, updateColPackage, pkgCell)
+		ui.updateTable.SetCell(row, updateColCurrent, currCell)
+		ui.updateTable.SetCell(row, updateColArrow, arrowCell)
+		ui.updateTable.SetCell(row, updateColNew, newCell)
+		ui.updateTable.SetCell(row, updateColSource, sourceCell)
 	}
 
 	if selectedRow > 0 && selectedRow <= len(ui.updatePackages) {
@@ -268,7 +229,7 @@ func (ui *UI) renderUpdateTable() {
 	}
 }
 
-
+// togglePackageSelection flips the selection state of a package at the given index and updates the UI
 func (ui *UI) togglePackageSelection(index int) {
 	if index < 0 || index >= len(ui.updatePackages) {
 		return
@@ -280,7 +241,7 @@ func (ui *UI) togglePackageSelection(index int) {
 	ui.renderUpdateTable()
 }
 
-
+// toggleSelectAll toggles the selection status for all eligible packages in the update list
 func (ui *UI) toggleSelectAll() {
 	allSelected := true
 	for _, p := range ui.updatePackages {
@@ -301,7 +262,7 @@ func (ui *UI) toggleSelectAll() {
 	ui.renderUpdateTable()
 }
 
-
+// checkForUpdates checks for pending system updates and updates the UI status display
 func (ui *UI) checkForUpdates() {
 	if ui.updatePackages != nil {
 		ui.renderUpdateTable()
@@ -330,7 +291,7 @@ func (ui *UI) checkForUpdates() {
 	ui.backgroundUpdateCheck()
 }
 
-
+// backgroundUpdateCheck executes shell commands asynchronously to detect repo and AUR updates
 func (ui *UI) backgroundUpdateCheck() {
 	ui.setStatus("Checking for updates...")
 	if ui.updateDetails != nil {
@@ -349,8 +310,7 @@ func (ui *UI) backgroundUpdateCheck() {
 		var pkgs []pkgmgr.UpdatePackage
 
 		// Parse AUR updates
-		linesAur := strings.Split(string(outAur), "\n")
-		for _, line := range linesAur {
+		for line := range strings.SplitSeq(string(outAur), "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
@@ -363,8 +323,7 @@ func (ui *UI) backgroundUpdateCheck() {
 		}
 
 		// Parse Repo updates
-		linesRepo := strings.Split(string(outRepo), "\n")
-		for _, line := range linesRepo {
+		for line := range strings.SplitSeq(string(outRepo), "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
@@ -411,10 +370,7 @@ func (ui *UI) backgroundUpdateCheck() {
 		var aurResults []pkgmgr.InfoRecord
 		const chunkSize = 100
 		for i := 0; i < len(foreignPkgs); i += chunkSize {
-			end := i + chunkSize
-			if end > len(foreignPkgs) {
-				end = len(foreignPkgs)
-			}
+			end := min(i + chunkSize, len(foreignPkgs))
 			chunk := foreignPkgs[i:end]
 			info := pkgmgr.InfoAur("", 5000, chunk...)
 			aurResults = append(aurResults, info.Results...)
@@ -560,7 +516,7 @@ func (ui *UI) backgroundUpdateCheck() {
 	}()
 }
 
-
+// countUpdatesInfo calculates metrics regarding the total, AUR, out-of-date, and local-only packages
 func (ui *UI) countUpdatesInfo(pkgs []pkgmgr.UpdatePackage) (totalUpdates, aurUpdates, outOfDate, notInAur int) {
 	for _, p := range pkgs {
 		if p.NotInAur {
@@ -578,7 +534,7 @@ func (ui *UI) countUpdatesInfo(pkgs []pkgmgr.UpdatePackage) (totalUpdates, aurUp
 	return
 }
 
-
+// getPackageSource determines the database origin of a given package name
 func (ui *UI) getPackageSource(pkgName string) string {
 	ui.alpmMutex.Lock()
 	defer ui.alpmMutex.Unlock()
@@ -597,7 +553,7 @@ func (ui *UI) getPackageSource(pkgName string) string {
 	return "AUR"
 }
 
-
+// loadUpdateDetails triggers the loading of package details into the UI, using a cache if available
 func (ui *UI) loadUpdateDetails(pkg pkgmgr.UpdatePackage) {
 	ui.cacheMutex.RLock()
 	cachedText, exists := ui.updateDetailsCache[pkg.Name]
@@ -613,7 +569,7 @@ func (ui *UI) loadUpdateDetails(pkg pkgmgr.UpdatePackage) {
 	go ui.preloadUpdateDetails(pkg)
 }
 
-
+// preloadUpdateDetails fetches and formats package details for display, updating the cache and UI
 func (ui *UI) preloadUpdateDetails(pkg pkgmgr.UpdatePackage) {
 	ui.cacheMutex.RLock()
 	_, exists := ui.updateDetailsCache[pkg.Name]
@@ -658,7 +614,7 @@ func (ui *UI) preloadUpdateDetails(pkg pkgmgr.UpdatePackage) {
 	})
 }
 
-
+// runUpgradeProcess suspends the UI to perform the system upgrade via the configured command line interface
 func (ui *UI) runUpgradeProcess() {
 	var selectedCount int
 	var ignoreList []string
@@ -745,7 +701,7 @@ func (ui *UI) runUpgradeProcess() {
 	ui.checkForUpdates()
 }
 
-
+// runUpdateHooks executes user-defined post-update scripts found in the configuration directory
 func (ui *UI) runUpdateHooks() {
 	if !ui.conf.RunUpdateHooks {
 		fmt.Printf("\nUpdate hooks are disabled in settings.\n")
@@ -803,7 +759,7 @@ func (ui *UI) runUpdateHooks() {
 	}
 }
 
-
+// hasFlag checks for the presence of a specific flag within a slice of command arguments
 func hasFlag(args []string, flag string) bool {
 	return slices.Contains(args, flag)
 }

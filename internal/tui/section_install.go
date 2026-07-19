@@ -18,8 +18,11 @@ import (
 	"github.com/rivo/tview"
 )
 
-
+// handleSearchChange updates the filter criteria and triggers searches when the search input changes
 func (ui *UI) handleSearchChange(text string) {
+	if ui.ignoreSearchChange {
+		return
+	}
 	term := strings.TrimSpace(text)
 	ui.lastSearchTerm = term
 	ui.pkgTable.Select(1, 0)
@@ -28,7 +31,7 @@ func (ui *UI) handleSearchChange(text string) {
 	ui.scheduleAurSearch(term)
 }
 
-
+// performLocalSearch filters the local package cache based on the provided term and updates the UI
 func (ui *UI) performLocalSearch(term string) {
 	if term == "" {
 		ui.shownPackages = nil
@@ -96,7 +99,7 @@ func (ui *UI) performLocalSearch(term string) {
 	}
 }
 
-
+// scheduleAurSearch manages debounced AUR search execution to prevent excessive API calls
 func (ui *UI) scheduleAurSearch(term string) {
 	ui.searchMutex.Lock()
 	defer ui.searchMutex.Unlock()
@@ -123,7 +126,7 @@ func (ui *UI) scheduleAurSearch(term string) {
 	})
 }
 
-
+// runAurSearch performs the network-based AUR search and updates the interface with results
 func (ui *UI) runAurSearch(ctx context.Context, term string) {
 	ui.app.QueueUpdateDraw(func() {
 		if ctx.Err() == nil {
@@ -225,7 +228,7 @@ func (ui *UI) runAurSearch(ctx context.Context, term string) {
 	})
 }
 
-
+// forceSearch immediately triggers a search operation, bypassing any active debounces
 func (ui *UI) forceSearch(term string) {
 	ui.searchMutex.Lock()
 	defer ui.searchMutex.Unlock()
@@ -258,7 +261,7 @@ func (ui *UI) forceSearch(term string) {
 	go ui.runAurSearch(ctx, term)
 }
 
-
+// renderPackageTable updates the visual table component with the current package list
 func (ui *UI) renderPackageTable() {
 	ui.isRendering = true
 	defer func() { ui.isRendering = false }()
@@ -267,33 +270,17 @@ func (ui *UI) renderPackageTable() {
 
 	ui.pkgTable.Clear()
 
-	ui.pkgTable.SetCell(0, 0, tview.NewTableCell("").SetSelectable(false).SetMaxWidth(8))
-	ui.pkgTable.SetCell(0, 1, tview.NewTableCell("Package").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetExpansion(1))
-	ui.pkgTable.SetCell(0, 2, tview.NewTableCell("Source   ").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
-	ui.pkgTable.SetCell(0, 3, tview.NewTableCell("Inst.").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(10))
-	ui.pkgTable.SetCell(0, 4, tview.NewTableCell("Votes").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
+	ui.pkgTable.SetCell(0, installColInst, tview.NewTableCell("Inst").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(4))
+	ui.pkgTable.SetCell(0, installColPackage, tview.NewTableCell("Package").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetExpansion(1))
+	ui.pkgTable.SetCell(0, installColSource, tview.NewTableCell("Source           ").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(17))
+	ui.pkgTable.SetCell(0, installColVotes, tview.NewTableCell("Votes").SetTextColor(ui.theme.PrimaryColor).SetSelectable(false).SetMaxWidth(12))
 
 	for idx, p := range ui.shownPackages {
 		row := idx + 1
-		isHighlighted := false
-		if ui.inVisualMode && ui.activeTab == 0 {
-			minRow := min(ui.visualStartRow, ui.visualEndRow)
-			maxRow := max(ui.visualStartRow, ui.visualEndRow)
-			if row >= minRow && row <= maxRow {
-				isHighlighted = true
-			}
-		}
+		isSelected := (row == selectedRow) || (selectedRow <= 0 && row == 1)
 
-		selStr := "   "
-		if ui.selectedInstall[p.Name] {
-			selStr = "  x"
-		}
-		selCell := tview.NewTableCell(selStr).SetMaxWidth(8).SetAlign(tview.AlignLeft)
-		if ui.selectedInstall[p.Name] {
-			selCell.SetTextColor(tcell.ColorGreen)
-		}
-
-		pkgCell := tview.NewTableCell(p.Name).SetTextColor(tcell.ColorDefault).SetExpansion(1)
+		pkgNameHighlighted := highlightFuzzy(p.Name, ui.lastSearchTerm, isSelected)
+		pkgCell := tview.NewTableCell(pkgNameHighlighted).SetTextColor(tcell.ColorDefault).SetExpansion(1)
 
 		sourceColor := getSourceColor(p.Source)
 		sourceCell := tview.NewTableCell(p.Source).SetTextColor(sourceColor).SetMaxWidth(12)
@@ -311,20 +298,10 @@ func (ui *UI) renderPackageTable() {
 		}
 		reputationCell := tview.NewTableCell(reputationStr).SetTextColor(tcell.ColorDefault).SetMaxWidth(12)
 
-		if isHighlighted {
-			bgColor := tcell.NewHexColor(0x1a3a5c)
-			selCell.SetBackgroundColor(bgColor)
-			pkgCell.SetBackgroundColor(bgColor)
-			sourceCell.SetBackgroundColor(bgColor)
-			installedCell.SetBackgroundColor(bgColor)
-			reputationCell.SetBackgroundColor(bgColor)
-		}
-
-		ui.pkgTable.SetCell(row, 0, selCell)
-		ui.pkgTable.SetCell(row, 1, pkgCell)
-		ui.pkgTable.SetCell(row, 2, sourceCell)
-		ui.pkgTable.SetCell(row, 3, installedCell)
-		ui.pkgTable.SetCell(row, 4, reputationCell)
+		ui.pkgTable.SetCell(row, installColInst, installedCell)
+		ui.pkgTable.SetCell(row, installColPackage, pkgCell)
+		ui.pkgTable.SetCell(row, installColSource, sourceCell)
+		ui.pkgTable.SetCell(row, installColVotes, reputationCell)
 	}
 
 	var activeRow int
@@ -349,13 +326,13 @@ func (ui *UI) renderPackageTable() {
 	ui.updateInstallRightFlex()
 }
 
-
+// loadPackageDetails fetches and displays extended information for a specific package
 func (ui *UI) loadPackageDetails(pkg pkgmgr.Package) {
 	if ui.detailsView == nil {
 		return
 	}
 	ui.detailsView.Clear()
-	ui.detailsView.SetBorder(true).SetBorderColor(ui.theme.UnfocusedBorderColor).SetTitle(fmt.Sprintf(" Details: %s ", pkg.Name))
+	ui.applyStandardBorder(ui.detailsView.Box, fmt.Sprintf(" Details: %s ", pkg.Name))
 
 	ui.cacheMutex.RLock()
 	cachedText, exists := ui.installDetailsCache[pkg.Name]
@@ -385,31 +362,18 @@ func (ui *UI) loadPackageDetails(pkg pkgmgr.Package) {
 	}()
 }
 
-
+// updateInstallRightFlex ensures the installation details layout is correctly initialized
 func (ui *UI) updateInstallRightFlex() {
-	if ui.installRightFlex == nil || ui.selectedTable == nil {
+	if ui.installRightFlex == nil {
 		return
 	}
-	selectedPkgs := ui.getSelectedInstallPackages()
-	if len(selectedPkgs) > 0 {
-		if ui.installRightFlex.GetItemCount() == 1 {
-			ui.installRightFlex.Clear()
-			ui.installRightFlex.AddItem(ui.detailsView, 0, 2, false)
-			ui.installRightFlex.AddItem(ui.selectedTable, 0, 1, false)
-		}
-		ui.renderSelectedTable(selectedPkgs)
-	} else {
-		if ui.installRightFlex.GetItemCount() == 2 {
-			ui.installRightFlex.Clear()
-			ui.installRightFlex.AddItem(ui.detailsView, 0, 1, false)
-			if ui.app != nil && ui.app.GetFocus() == ui.selectedTable {
-				ui.app.SetFocus(ui.pkgTable)
-			}
-		}
+	if ui.installRightFlex.GetItemCount() != 1 {
+		ui.installRightFlex.Clear()
+		ui.installRightFlex.AddItem(ui.detailsView, 0, 1, false)
 	}
 }
 
-
+// renderSelectedTable updates the list of packages selected for pending operations
 func (ui *UI) renderSelectedTable(selectedPkgs []string) {
 	if ui.selectedTable == nil {
 		return
@@ -429,7 +393,7 @@ func (ui *UI) renderSelectedTable(selectedPkgs []string) {
 	}
 }
 
-
+// promptInstall displays a confirmation dialog before initiating an installation command
 func (ui *UI) promptInstall(pkgName string) {
 	pkgs := strings.Fields(pkgName)
 	var message string
@@ -443,7 +407,7 @@ func (ui *UI) promptInstall(pkgName string) {
 	})
 }
 
-
+// promptUninstall displays a confirmation dialog before initiating an uninstallation command
 func (ui *UI) promptUninstall(pkgName string) {
 	pkgs := strings.Fields(pkgName)
 	var message string
@@ -457,7 +421,7 @@ func (ui *UI) promptUninstall(pkgName string) {
 	})
 }
 
-
+// performInstallOrUninstall handles the execution of system commands for package management
 func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
 	cmdStr := ui.conf.InstallCommand
 	if !isInstall {
@@ -487,8 +451,7 @@ func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
 
 		err := cmd.Run()
 		if err == nil {
-			pkgs := strings.Fields(pkgName)
-			for _, p := range pkgs {
+			for p := range strings.FieldsSeq(pkgName) {
 				if isInstall {
 					_ = pkglist.AddPackage(ui.conf.PackagesPath, ui.conf.PackagesFile, p)
 					util.PrintSuccess("Package '%s' installed and added to %s.\n", p, ui.conf.PackagesFile)
@@ -516,5 +479,143 @@ func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
 	case 1:
 		ui.updatePackages = nil
 		ui.checkForUpdates()
+	}
+}
+
+// highlightFuzzy applies color formatting to characters in the package name that match the search term
+func highlightFuzzy(name, term string, isSelected bool) string {
+	if isSelected {
+		return "[white::b]" + name + "[-]"
+	}
+	if term == "" {
+		return "[white]" + name + "[-]"
+	}
+	termLower := strings.ToLower(term)
+	nameLower := strings.ToLower(name)
+
+	var sb strings.Builder
+	termIdx := 0
+	inMatch := false
+
+	matchColor := "blue::b"
+	normalColor := "default::-"
+
+	for i := 0; i < len(name); i++ {
+		char := name[i]
+		charLower := nameLower[i]
+
+		isMatch := false
+		if termIdx < len(termLower) && charLower == termLower[termIdx] {
+			isMatch = true
+			termIdx++
+		}
+
+		if isMatch {
+			if !inMatch {
+				if i > 0 {
+					sb.WriteString("[-]")
+				}
+				sb.WriteString("[" + matchColor + "]")
+				inMatch = true
+			}
+		} else {
+			if inMatch || i == 0 {
+				if i > 0 {
+					sb.WriteString("[-]")
+				}
+				sb.WriteString("[" + normalColor + "]")
+				inMatch = false
+			}
+		}
+		sb.WriteByte(char)
+	}
+	sb.WriteString("[-]")
+	return sb.String()
+}
+
+// updateTableFuzzyHighlights refreshes the highlighting for all rows in the package table
+func (ui *UI) updateTableFuzzyHighlights(selectedRow int) {
+	for idx, p := range ui.shownPackages {
+		row := idx + 1
+		cell := ui.pkgTable.GetCell(row, installColPackage)
+		if cell != nil {
+			isSelected := (row == selectedRow)
+			cell.SetText(highlightFuzzy(p.Name, ui.lastSearchTerm, isSelected))
+		}
+	}
+}
+
+// moveSelectionDown updates the table selection to the next row and synchronizes the UI
+func (ui *UI) moveSelectionDown() {
+	if len(ui.shownPackages) == 0 {
+		return
+	}
+	row, _ := ui.pkgTable.GetSelection()
+	nextRow := row + 1
+	if nextRow > len(ui.shownPackages) {
+		nextRow = 1
+	}
+	ui.pkgTable.Select(nextRow, 0)
+	ui.updateSearchInputFromSelection(nextRow)
+}
+
+// moveSelectionUp updates the table selection to the previous row and synchronizes the UI
+func (ui *UI) moveSelectionUp() {
+	if len(ui.shownPackages) == 0 {
+		return
+	}
+	row, _ := ui.pkgTable.GetSelection()
+	prevRow := row - 1
+	if prevRow < 1 {
+		prevRow = len(ui.shownPackages)
+	}
+	ui.pkgTable.Select(prevRow, 0)
+	ui.updateSearchInputFromSelection(prevRow)
+}
+
+// updateSearchInputFromSelection syncs the search input field with the currently selected package
+func (ui *UI) updateSearchInputFromSelection(row int) {
+	if row > 0 && row <= len(ui.shownPackages) {
+		pkgName := ui.shownPackages[row-1].Name
+		ui.ignoreSearchChange = true
+		ui.searchField.SetText(pkgName)
+		ui.ignoreSearchChange = false
+
+		pkg := ui.shownPackages[row-1]
+		ui.selectedPkg = &pkg
+		ui.loadPackageDetails(pkg)
+	}
+}
+
+// getCanonicalPackageName attempts to resolve a package name to its correct case-sensitive version
+func (ui *UI) getCanonicalPackageName(name string) (string, bool) {
+	nameLower := strings.ToLower(name)
+
+	for _, p := range ui.shownPackages {
+		if strings.ToLower(p.Name) == nameLower {
+			return p.Name, true
+		}
+	}
+
+	ui.alpmMutex.Lock()
+	defer ui.alpmMutex.Unlock()
+	for _, cp := range ui.pkgsCache {
+		if cp.NameLower == nameLower {
+			return cp.Name, true
+		}
+	}
+
+	return "", false
+}
+
+// attemptInstallExact verifies a package name exists before prompting the user for installation
+func (ui *UI) attemptInstallExact(name string) {
+	canonicalName, exists := ui.getCanonicalPackageName(name)
+	if exists {
+		ui.promptInstall(canonicalName)
+		return
+	}
+	if ui.selectedPkg != nil {
+		ui.promptInstall(ui.selectedPkg.Name)
 	}
 }
