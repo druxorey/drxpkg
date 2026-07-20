@@ -71,9 +71,12 @@ func (s *Settings) Save() error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	hooksDir := filepath.Join(dir, "update_hooks")
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		return err
+	hooksDir := filepath.Join(dir, "hooks")
+	for _, sub := range []string{"install", "update", "maintenance"} {
+		subDir := filepath.Join(hooksDir, sub)
+		if err := os.MkdirAll(subDir, 0755); err != nil {
+			return err
+		}
 	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {

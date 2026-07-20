@@ -176,7 +176,7 @@ func (ui *UI) setupSettingsPopup() {
 	labels[settingIdxUpgradeCmd] = "Upgrade Command"
 	labels[settingIdxMaxResults] = "Max Results"
 	labels[settingIdxAurCb] = "Disable AUR"
-	labels[settingIdxHooksCb] = "Run Update Hooks"
+	labels[settingIdxHooksCb] = "Run Hooks"
 
 	for i, name := range labels {
 		lblText := "  " + name
@@ -346,7 +346,7 @@ func (ui *UI) updateSettingsDisplay() {
 		ui.settingAurCb.SetFieldTextColor(ui.theme.SelectedTextColor)
 	}
 
-	// Run Update Hooks Checkbox styling
+	// Run Hooks Checkbox styling
 	if ui.settingsFocusedIndex == settingIdxHooksCb {
 		ui.settingHooksCb.SetFieldBackgroundColor(ui.theme.SettingsFieldFocusedBg)
 		ui.settingHooksCb.SetFieldTextColor(ui.theme.SettingsFieldFocusedFg)

@@ -111,6 +111,7 @@ type UI struct {
 	cacheOptions             []cacheOption
 	logsTable                *tview.Table
 	logOptions               []logOption
+	maintenanceItems         []maintenanceMenuItem
 
 	// System detection
 	isCachyOS                bool

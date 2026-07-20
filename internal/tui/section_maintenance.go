@@ -2,11 +2,15 @@
 package tui
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 
+	"github.com/druxorey/drxpkg/internal/config"
 	"github.com/druxorey/drxpkg/internal/util"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -17,6 +21,13 @@ type maintenanceTask struct {
 	Description  string
 	Command      string
 	RequiresSudo bool
+}
+
+type maintenanceMenuItem struct {
+	label       string
+	itemType    string // "trash", "cache", "logs", "separator", "lockfile", "mirrors", "custom"
+	scriptPath  string
+	description string
 }
 
 type trashFile struct {
@@ -242,26 +253,108 @@ func (ui *UI) getLogOptions() []logOption {
 	return options
 }
 
+// loadMaintenanceItems loads standard items and custom scripts from the hooks/maintenance directory
+func (ui *UI) loadMaintenanceItems() {
+	ui.maintenanceItems = []maintenanceMenuItem{
+		{label: "Trash", itemType: "trash"},
+		{label: "Cache", itemType: "cache"},
+		{label: "Logs", itemType: "logs"},
+		{label: "───────────────", itemType: "separator"},
+		{label: "Pacman Lock File", itemType: "lockfile"},
+		{label: "Update Mirrors", itemType: "mirrors"},
+	}
+
+	configDir, err := config.GetConfigDir()
+	if err == nil {
+		customDir := filepath.Join(configDir, "hooks", "maintenance")
+		_ = os.MkdirAll(customDir, 0755)
+		files, err := os.ReadDir(customDir)
+		if err == nil {
+			hasCustom := false
+			var customItems []maintenanceMenuItem
+			for _, file := range files {
+				if file.IsDir() {
+					continue
+				}
+				path := filepath.Join(customDir, file.Name())
+				desc := ui.parseScriptDescription(path)
+				
+				customItems = append(customItems, maintenanceMenuItem{
+					label:       file.Name(),
+					itemType:    "custom",
+					scriptPath:  path,
+					description: desc,
+				})
+				hasCustom = true
+			}
+
+			if hasCustom {
+				// Sort custom scripts alphabetically
+				sort.Slice(customItems, func(i, j int) bool {
+					return customItems[i].label < customItems[j].label
+				})
+
+				ui.maintenanceItems = append(ui.maintenanceItems, maintenanceMenuItem{
+					label:    "───────────────",
+					itemType: "separator",
+				})
+				ui.maintenanceItems = append(ui.maintenanceItems, customItems...)
+			}
+		}
+	}
+}
+
+// parseScriptDescription extracts the comment under the shebang line to use as a description
+func (ui *UI) parseScriptDescription(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return "Failed to read script."
+	}
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() && len(lines) < 5 {
+		lines = append(lines, scanner.Text())
+	}
+
+	if len(lines) >= 2 {
+		firstLine := strings.TrimSpace(lines[0])
+		if strings.HasPrefix(firstLine, "#!") {
+			secondLine := strings.TrimSpace(lines[1])
+			if strings.HasPrefix(secondLine, "#") {
+				return strings.TrimSpace(strings.TrimPrefix(secondLine, "#"))
+			}
+		}
+	}
+
+	// Fallback: look for the first non-shebang comment line
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, "#!") {
+			return strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))
+		}
+	}
+
+	return "No description provided."
+}
+
 // setupMaintenanceSection initializes the maintenance UI layout, including menus and sub-panels
 func (ui *UI) setupMaintenanceSection() tview.Primitive {
+	// Load the dynamic list of maintenance menu items
+	ui.loadMaintenanceItems()
+
 	// Initialize Left Menu Table
 	ui.manageTable = ui.createStandardTable(" Menu ", 0, 0)
 
-	menuItems := []string{
-		"Trash",
-		"Cache",
-		"Logs",
-		"───────────────",
-		"Pacman Lock File",
-		"Update Mirrors",
-	}
-
-	for i, item := range menuItems {
-		cell := tview.NewTableCell(item).SetExpansion(1)
-		if i == 3 {
+	for i, item := range ui.maintenanceItems {
+		cell := tview.NewTableCell(item.label).SetExpansion(1)
+		if item.itemType == "separator" {
 			cell.SetSelectable(false).SetTextColor(ui.theme.NeutralGrayColor).SetAlign(tview.AlignCenter)
-		} else if i > 3 {
+		} else if item.itemType == "lockfile" || item.itemType == "mirrors" {
 			cell.SetTextColor(tcell.ColorRed)
+		} else if item.itemType == "custom" {
+			cell.SetTextColor(tcell.ColorGreen)
 		} else {
 			cell.SetTextColor(tcell.ColorDefault)
 		}
@@ -348,12 +441,25 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 	// Input captures
 	var lastSelectedLeftRow = 0
 	ui.manageTable.SetSelectionChangedFunc(func(row, column int) {
-		if row == manageItemSeparator {
-			switch lastSelectedLeftRow {
-			case manageItemLogs:
-				ui.manageTable.Select(manageItemLockFile, 0)
-			case manageItemLockFile:
-				ui.manageTable.Select(manageItemLogs, 0)
+		if row < 0 || row >= len(ui.maintenanceItems) {
+			return
+		}
+		item := ui.maintenanceItems[row]
+		if item.itemType == "separator" {
+			if row > lastSelectedLeftRow {
+				nextRow := row + 1
+				if nextRow < len(ui.maintenanceItems) {
+					ui.manageTable.Select(nextRow, 0)
+				} else {
+					ui.manageTable.Select(lastSelectedLeftRow, 0)
+				}
+			} else {
+				prevRow := row - 1
+				if prevRow >= 0 {
+					ui.manageTable.Select(prevRow, 0)
+				} else {
+					ui.manageTable.Select(lastSelectedLeftRow, 0)
+				}
 			}
 			return
 		}
@@ -363,31 +469,33 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 
 	ui.manageTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		row, _ := ui.manageTable.GetSelection()
-		if ui.handleTableVimNavigation(event, ui.manageTable, len(menuItems)) {
+		if row < 0 || row >= len(ui.maintenanceItems) {
+			return event
+		}
+		if ui.handleTableVimNavigation(event, ui.manageTable, len(ui.maintenanceItems)) {
 			return nil
 		}
+		item := ui.maintenanceItems[row]
 		if event.Key() == tcell.KeyTAB {
-			if row >= manageItemTrash && row <= manageItemLogs {
-				switch row {
-				case manageItemTrash:
-					ui.app.SetFocus(ui.trashTable)
-				case manageItemCache:
-					ui.app.SetFocus(ui.cacheTable)
-				case manageItemLogs:
-					ui.app.SetFocus(ui.logsTable)
-				}
+			switch item.itemType {
+			case "trash":
+				ui.app.SetFocus(ui.trashTable)
+			case "cache":
+				ui.app.SetFocus(ui.cacheTable)
+			case "logs":
+				ui.app.SetFocus(ui.logsTable)
 			}
 			return nil
 		}
 		if event.Key() == tcell.KeyEnter {
-			switch row {
-			case manageItemLockFile:
+			switch item.itemType {
+			case "lockfile":
 				ui.promptMaintenance(maintenanceTask{
 					Name:         "Fix Pacman Database Lock File",
 					Command:      "sudo rm -f /var/lib/pacman/db.lck",
 					RequiresSudo: true,
 				})
-			case manageItemMirrors:
+			case "mirrors":
 				cmd := "rate-mirrors arch | sudo tee /etc/pacman.d/mirrorlist"
 				if ui.isCachyOS {
 					cmd = "cachyrate-mirrors"
@@ -395,6 +503,12 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 				ui.promptMaintenance(maintenanceTask{
 					Name:         "Update Package Mirrors (Benchmark)",
 					Command:      cmd,
+					RequiresSudo: false,
+				})
+			case "custom":
+				ui.promptMaintenance(maintenanceTask{
+					Name:         item.label,
+					Command:      item.scriptPath,
 					RequiresSudo: false,
 				})
 			}
@@ -509,40 +623,44 @@ func (ui *UI) setupMaintenanceSection() tview.Primitive {
 
 // updateMaintenanceRightPanel updates the right-hand panel view based on the selected menu item
 func (ui *UI) updateMaintenanceRightPanel(row int) {
-	if ui.managePages == nil {
+	if ui.managePages == nil || row < 0 || row >= len(ui.maintenanceItems) {
 		return
 	}
-	switch row {
-	case manageItemTrash:
+	item := ui.maintenanceItems[row]
+	switch item.itemType {
+	case "trash":
 		ui.trashFiles = getTrashFiles()
 		ui.renderTrashTable()
 		ui.managePages.SwitchToPage("trash")
 		if len(ui.trashFiles) > 0 {
 			ui.trashTable.Select(1, 0)
 		}
-	case manageItemCache:
+	case "cache":
 		ui.cacheOptions = ui.getCacheOptions()
 		ui.renderCacheTable()
 		ui.managePages.SwitchToPage("cache")
 		if len(ui.cacheOptions) > 0 {
 			ui.cacheTable.Select(1, 0)
 		}
-	case manageItemLogs:
+	case "logs":
 		ui.logOptions = ui.getLogOptions()
 		ui.renderLogsTable()
 		ui.managePages.SwitchToPage("logs")
 		if len(ui.logOptions) > 0 {
 			ui.logsTable.Select(1, 0)
 		}
-	case manageItemLockFile:
+	case "lockfile":
 		ui.manageDetails.SetText("Fix Pacman Database Lock File\n\nRemoves /var/lib/pacman/db.lck.\nRun this if pacman or yay is locked due to a previous crash or interruption.\n\n[red]Requires Administrator Privileges (sudo)[-]\n\n[yellow::b]Press ENTER on the left menu to execute this task.[-]")
 		ui.managePages.SwitchToPage("details")
-	case manageItemMirrors:
+	case "mirrors":
 		cmd := "rate-mirrors arch | sudo tee /etc/pacman.d/mirrorlist"
 		if ui.isCachyOS {
 			cmd = "cachyrate-mirrors"
 		}
 		ui.manageDetails.SetText(fmt.Sprintf("Update Package Mirrors (Benchmark)\n\nBenchmarks and updates package mirrors.\nCommand: %s\n\n[yellow::b]Press ENTER on the left menu to execute this task.[-]", cmd))
+		ui.managePages.SwitchToPage("details")
+	case "custom":
+		ui.manageDetails.SetText(fmt.Sprintf("[blue::b]%s[-]\n\n%s\n\n[yellow]Path:[-] %s\n\n[yellow::b]Press ENTER on the left menu to execute this task.[-]", item.label, item.description, item.scriptPath))
 		ui.managePages.SwitchToPage("details")
 	}
 }

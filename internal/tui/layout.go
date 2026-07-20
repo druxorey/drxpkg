@@ -53,15 +53,7 @@ const (
 	updateColSource
 )
 
-// Maintenance Menu Items
-const (
-	manageItemTrash = iota
-	manageItemCache
-	manageItemLogs
-	manageItemSeparator
-	manageItemLockFile
-	manageItemMirrors
-)
+
 
 // Settings Item Indices
 const (

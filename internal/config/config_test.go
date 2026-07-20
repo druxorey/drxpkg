@@ -39,9 +39,11 @@ func TestConfigLoadSave(t *testing.T) {
 		t.Fatalf("expected config file to exist at %s", expectedFile)
 	}
 
-	expectedHooksDir := filepath.Join(tempDir, "drxpkg", "update_hooks")
-	if fi, err := os.Stat(expectedHooksDir); os.IsNotExist(err) || !fi.IsDir() {
-		t.Fatalf("expected update_hooks directory to exist at %s", expectedHooksDir)
+	for _, sub := range []string{"install", "update", "maintenance"} {
+		expectedSubDir := filepath.Join(tempDir, "drxpkg", "hooks", sub)
+		if fi, err := os.Stat(expectedSubDir); os.IsNotExist(err) || !fi.IsDir() {
+			t.Fatalf("expected %s directory to exist at %s", sub, expectedSubDir)
+		}
 	}
 
 	loaded, err := Load()

@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/druxorey/drxpkg/internal/config"
 	"github.com/druxorey/drxpkg/internal/pkgmgr"
 	"github.com/druxorey/drxpkg/internal/util"
 	"github.com/gdamore/tcell/v2"
@@ -370,7 +368,7 @@ func (ui *UI) backgroundUpdateCheck() {
 		var aurResults []pkgmgr.InfoRecord
 		const chunkSize = 100
 		for i := 0; i < len(foreignPkgs); i += chunkSize {
-			end := min(i + chunkSize, len(foreignPkgs))
+			end := min(i+chunkSize, len(foreignPkgs))
 			chunk := foreignPkgs[i:end]
 			info := pkgmgr.InfoAur("", 5000, chunk...)
 			aurResults = append(aurResults, info.Results...)
@@ -669,6 +667,8 @@ func (ui *UI) runUpgradeProcess() {
 			args = append(args, "--ignore", strings.Join(ignoreList, ","))
 		}
 
+		ui.runHooks("update", true)
+
 		// Ensure we run system upgrade command. If pacman, run via sudo
 		var upgradeCmd *exec.Cmd
 		if binary == "pacman" {
@@ -690,7 +690,7 @@ func (ui *UI) runUpgradeProcess() {
 			util.PrintSuccess("\nSystem upgrade completed successfully.\n")
 		}
 
-		ui.runUpdateHooks()
+		ui.runHooks("update", false)
 
 		fmt.Println("\nPress ENTER to return to drxpkg...")
 		_, _ = os.Stdin.Read(make([]byte, 1))
@@ -699,64 +699,6 @@ func (ui *UI) runUpgradeProcess() {
 	_ = ui.reinitPacmanDbs()
 	ui.updatePackages = nil
 	ui.checkForUpdates()
-}
-
-// runUpdateHooks executes user-defined post-update scripts found in the configuration directory
-func (ui *UI) runUpdateHooks() {
-	if !ui.conf.RunUpdateHooks {
-		fmt.Printf("\nUpdate hooks are disabled in settings.\n")
-		return
-	}
-
-	configDir, err := config.GetConfigDir()
-	if err != nil {
-		util.PrintError("\nFailed to get config directory: %v\n", err)
-		return
-	}
-
-	hooksDir := filepath.Join(configDir, "update_hooks")
-	if err := os.MkdirAll(hooksDir, 0755); err != nil {
-		util.PrintError("\nFailed to create update hooks directory: %v\n", err)
-		return
-	}
-
-	files, err := os.ReadDir(hooksDir)
-	if err != nil {
-		util.PrintError("\nFailed to read update hooks directory: %v\n", err)
-		return
-	}
-
-	var hookFiles []string
-	for _, file := range files {
-		if !file.IsDir() {
-			hookFiles = append(hookFiles, file.Name())
-		}
-	}
-
-	if len(hookFiles) == 0 {
-		fmt.Printf("\nNo update hooks found in %s\n", hooksDir)
-		return
-	}
-
-	// Sort alphabetically to run sequentially
-	sort.Strings(hookFiles)
-
-	fmt.Printf("\n ➤ \033[1;34mRunning post-update hooks...\033[0m\n")
-	for _, filename := range hookFiles {
-		scriptPath := filepath.Join(hooksDir, filename)
-		fmt.Printf("\n ➤ \033[1;34mExecuting hook: %s...\033[0m\n", filename)
-
-		cmd := exec.Command("bash", scriptPath)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		if err := cmd.Run(); err != nil {
-			util.PrintError("Hook '%s' failed: %v\n", filename, err)
-		} else {
-			util.PrintSuccess("Hook '%s' completed.\n", filename)
-		}
-	}
 }
 
 // hasFlag checks for the presence of a specific flag within a slice of command arguments

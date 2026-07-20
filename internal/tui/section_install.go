@@ -317,6 +317,8 @@ func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
 			fullCommand = cmdStr + " " + pkgName
 		}
 
+		ui.runHooks("install", true)
+
 		shell := os.Getenv("SHELL")
 		if shell == "" {
 			shell = "/bin/sh"
@@ -339,12 +341,14 @@ func (ui *UI) performInstallOrUninstall(pkgName string, isInstall bool) {
 					util.PrintSuccess("Package '%s' uninstalled and removed from %s.\n", p, ui.conf.PackagesFile)
 				}
 			}
-			fmt.Println("\nPress ENTER to return to drxpkg...")
-			_, _ = os.Stdin.Read(make([]byte, 1))
 		} else {
-			util.PrintError("Command failed: %v\nPress ENTER to return to drxpkg...", err)
-			_, _ = os.Stdin.Read(make([]byte, 1))
+			util.PrintError("Command failed: %v\n", err)
 		}
+
+		ui.runHooks("install", false)
+
+		fmt.Println("\nPress ENTER to return to drxpkg...")
+		_, _ = os.Stdin.Read(make([]byte, 1))
 	})
 
 	_ = ui.reinitPacmanDbs()
